@@ -14,7 +14,6 @@ export const useSettingsStore = defineStore('settings', () => {
     userName: '',
     thinkingEnabled: false,
     userAvatar: '',
-    backgroundImage: '',
   }
 
   const saved = loadSettings()
@@ -29,7 +28,6 @@ export const useSettingsStore = defineStore('settings', () => {
   const userName = ref(saved.userName ?? defaults.userName)
   const thinkingEnabled = ref(saved.thinkingEnabled ?? defaults.thinkingEnabled)
   const userAvatar = ref(saved.userAvatar ?? defaults.userAvatar)
-  const backgroundImage = ref(saved.backgroundImage ?? defaults.backgroundImage)
 
   // 预设模型列表
   const modelPresets = [
@@ -87,7 +85,6 @@ export const useSettingsStore = defineStore('settings', () => {
       userName: userName.value,
       thinkingEnabled: thinkingEnabled.value,
       userAvatar: userAvatar.value,
-      backgroundImage: backgroundImage.value,
     })
   }
 
@@ -95,13 +92,13 @@ export const useSettingsStore = defineStore('settings', () => {
 
   // 自动持久化：任何设置变更立刻保存
   watch(
-    [apiKey, apiBase, model, temperature, maxTokens, topP, personaPrompt, userName, thinkingEnabled, userAvatar, backgroundImage],
+    [apiKey, apiBase, model, temperature, maxTokens, topP, personaPrompt, userName, thinkingEnabled, userAvatar],
     () => persist(),
     { deep: false }
   )
 
   return {
-    apiKey, apiBase, model, temperature, maxTokens, topP, personaPrompt, userName, thinkingEnabled, userAvatar, backgroundImage,
+    apiKey, apiBase, model, temperature, maxTokens, topP, personaPrompt, userName, thinkingEnabled, userAvatar,
     modelPresets, applyPreset, persist, settingsReady, defaults,
   }
 })

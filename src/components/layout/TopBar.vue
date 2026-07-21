@@ -23,7 +23,7 @@ const emit = defineEmits(['open-settings'])
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 24px;
+  padding: 12px 24px 12px 50px;
   border-bottom: 1px solid var(--border-color);
   background: var(--bg-primary);
   flex-shrink: 0;
@@ -61,11 +61,10 @@ const emit = defineEmits(['open-settings'])
 /* 移动端 */
 @media (max-width: 768px) {
   .topbar {
-    padding: 10px 16px;
+    padding: 10px 16px 10px 50px;
   }
   .title {
     font-size: 16px;
-    margin-left: 40px;
   }
 }
 </style>

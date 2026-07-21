@@ -39,18 +39,18 @@
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
         </button>
       </div>
-      <!-- 用户消息删除 -->
-      <div class="message-actions" v-if="message.role === 'user'">
-        <button class="btn-action danger" @click="chatStore.deleteMessage(index)" title="删除">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-        </button>
-      </div>
+    </div>
+
+    <!-- 用户消息删除（气泡左边） -->
+    <div class="user-actions" v-if="message.role === 'user'">
+      <button class="btn-action user-del" @click="chatStore.deleteMessage(index)" title="删除">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+      </button>
     </div>
 
     <!-- 用户头像 -->
     <div v-if="message.role === 'user'" class="message-avatar user-avatar">
-      <img v-if="userAvatar" :src="userAvatar" class="avatar-img" alt="我" />
-      <svg v-else width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <img :src="userAvatar || '/yocim.png'" class="avatar-img" alt="我" />
     </div>
   </div>
 </template>
@@ -128,11 +128,24 @@ function copyContent() {
 
 .btn-action {
   width: 28px; height: 28px; border: none; border-radius: 5px;
-  background: transparent; color: var(--text-muted); cursor: pointer;
+  background: transparent; color: var(--text-secondary); cursor: pointer;
   display: flex; align-items: center; justify-content: center;
 }
 .btn-action:hover { background: var(--bg-hover); color: var(--text-primary); }
 .btn-action.danger:hover { background: var(--danger-bg); color: var(--danger); }
+
+/* 用户消息删除按钮（气泡左边，深一点） */
+.user-actions {
+  display: flex; align-items: center; margin-right: 4px;
+  opacity: 0; transition: opacity 0.2s;
+}
+.message-item.user:hover .user-actions { opacity: 1; }
+.user-del {
+  color: var(--text-secondary);
+  background: rgba(0,0,0,0.06);
+  border-radius: 6px;
+}
+.user-del:hover { background: var(--danger-bg); color: var(--danger); }
 
 .thinking-block {
   margin-bottom: 8px; border: 1px solid var(--border-color);
