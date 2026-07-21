@@ -37,12 +37,22 @@ onMounted(async () => {
     e.preventDefault()
     window.__deferredPrompt = e
   })
+
+  // 移动端键盘弹出时调整高度（兼容不支持 dvh 的浏览器）
+  if (window.visualViewport) {
+    const adjustHeight = () => {
+      document.documentElement.style.height = window.visualViewport.height + 'px'
+    }
+    window.visualViewport.addEventListener('resize', adjustHeight)
+    window.visualViewport.addEventListener('scroll', adjustHeight)
+  }
 })
 </script>
 
 <style scoped>
 .app-container {
   display: flex;
+  height: 100dvh;
   height: 100vh;
   width: 100vw;
   overflow: hidden;
