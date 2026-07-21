@@ -35,10 +35,10 @@ export const useSettingsStore = defineStore('settings', () => {
     { label: 'DeepSeek V4 Flash', model: 'deepseek-v4-flash', base: 'https://api.deepseek.com', maxTokens: 32768 },
     { label: 'DeepSeek V4 Pro', model: 'deepseek-v4-pro', base: 'https://api.deepseek.com', maxTokens: 65536 },
     //
-    { label: 'XIYUE 1.2 mini',model: 'xiyue-1.2-mini', base:'https://api.yocim.com'},
-    { label: 'XIYUE 1.2 flash',model: 'xiyue-1.2-Flash', base:'https://api.yocim.com'},
-    { label: 'XIYUE 1.2 Plus',model: 'xiyue-1.2-Plus', base:'https://api.yocim.com'},
-    { label: 'XIYUE 1.2 MAX',model: 'xiyue-1.2-MAX', base:'https://api.yocim.com'},
+    { label: 'XIYUE 1.2 mini',model: 'xiyue-1.2-mini', base:'https://api.yocim.top'},
+    { label: 'XIYUE 1.2 flash',model: 'xiyue-1.2-Flash', base:'https://api.yocim.top'},
+    { label: 'XIYUE 1.2 Plus',model: 'xiyue-1.2-Plus', base:'https://api.yocim.top'},
+    { label: 'XIYUE 1.2 MAX',model: 'xiyue-1.2-MAX', base:'https://api.yocim.top'},
     // GLM (智谱AI)
     { label: 'GLM-5.2', model: 'glm-5.2', base: 'https://open.bigmodel.cn/api/paas/v4/' },
     { label: 'GLM-5.1', model: 'glm-5.1', base: 'https://open.bigmodel.cn/api/paas/v4/' },
@@ -55,8 +55,8 @@ export const useSettingsStore = defineStore('settings', () => {
     { label: 'Gemini 3.6 flash', model: 'gemini-3.6-flash', base: 'https://generativelanguage.googleapis.com/v1beta/openai' },
     { label: 'Gemini 3.6 pro', model: 'gemini-3.6-pro', base: 'https://generativelanguage.googleapis.com/v1beta/openai' },
     // Claude
-    { label: 'Claude Fable-5' ,model:'Claude Fable-5', base: 'https://api.openai.com/v1' },
-    { label:'Claude opus4.8' ,model:'Claude opus4.8', base: 'https://api.openai.com/v1'},
+    { label: 'Claude Fable-5' ,model:'Claude Fable-5', base: 'https://api.anthropic.com' },
+    { label:'Claude opus4.8' ,model:'Claude opus4.8', base: 'https://api.anthropic.com'},
     // Ollama 本地模型
     { label: 'Ollama', model: 'deepseek-r1:7b', base: '/ollama' },
     // 自定义
