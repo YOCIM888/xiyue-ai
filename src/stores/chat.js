@@ -3,6 +3,8 @@ import { ref, watch } from 'vue'
 import { useTopicsStore } from './topics'
 import { useSettingsStore } from './settings'
 import { sendChatRequest } from '../services/api'
+// 系统提示词文件（Vite 构建时内联，零延迟）
+import systemPromptRaw from '../../public/prompt/system.md?raw'
 
 export const useChatStore = defineStore('chat', () => {
   const messages = ref([])
@@ -151,17 +153,16 @@ export const useChatStore = defineStore('chat', () => {
 
   function buildSystemPrompt() {
     const settings = useSettingsStore()
-    const externalPrompt = localStorage.getItem('system_prompt_content') || ''
+    // 系统提示词从文件内联加载（构建时嵌入），零延迟永不失效
+    const externalPrompt = systemPromptRaw || ''
     const persona = settings.personaPrompt || ''
     const userName = settings.userName || ''
 
     const parts = []
     if (externalPrompt.trim()) {
-      // 系统提示词为最高优先级，独立发送
       parts.push(externalPrompt.trim())
     }
     if (persona.trim() && persona.trim() !== '你是一个有用、友好的AI助手。请用中文回答用户的问题。') {
-      // 仅当用户自定义了人设时才追加
       const prefix = externalPrompt.trim()
         ? '\n\n【补充风格指令 — 优先级低于上述系统设定】'
         : '【系统指令】'

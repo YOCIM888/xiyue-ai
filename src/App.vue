@@ -21,17 +21,6 @@ import { loadSystemPrompt } from './utils/storage'
 const settingsPanel = ref(null)
 
 onMounted(async () => {
-  // 每次启动从 prompt/system.md 加载系统提示词
-  try {
-    const resp = await fetch('/prompt/system.md')
-    if (resp.ok) {
-      const text = await resp.text()
-      if (text.trim()) {
-        localStorage.setItem('system_prompt_content', text)
-      }
-    }
-  } catch {}
-
   // PWA 安装事件
   window.addEventListener('beforeinstallprompt', (e) => {
     e.preventDefault()
