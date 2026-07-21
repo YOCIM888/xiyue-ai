@@ -1,0 +1,153 @@
+/**
+ * 发送聊天请求 — 支持 OpenAI 兼容 + Ollama 原生格式
+ */
+export async function sendChatRequest({
+  apiBase,
+  apiKey,
+  model,
+  temperature,
+  maxTokens,
+  topP,
+  messages,
+  signal,
+  onChunk,
+  thinkingEnabled,
+}) {
+  const isOllama = apiBase.includes('/ollama')
+
+  if (isOllama) {
+    return ollamaChat({ apiBase, model, temperature, maxTokens, topP, messages, signal, onChunk })
+  }
+  return openaiChat({ apiBase, apiKey, model, temperature, maxTokens, topP, messages, signal, onChunk, thinkingEnabled })
+}
+
+/** OpenAI 兼容格式 (SSE) */
+async function openaiChat({ apiBase, apiKey, model, temperature, maxTokens, topP, messages, signal, onChunk, thinkingEnabled }) {
+  const url = `${apiBase.replace(/\/+$/, '')}/chat/completions`
+
+  const body = { model, messages, temperature, max_tokens: Math.max(1, Math.min(maxTokens || 4096, 393216)), top_p: topP, stream: true }
+  // DeepSeek 思考模式（默认开启，需显式关闭）
+  if (model.startsWith('deepseek') || apiBase.includes('deepseek')) {
+    body.thinking = { type: thinkingEnabled ? 'enabled' : 'disabled' }
+  }
+  const headers = { 'Content-Type': 'application/json' }
+  if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
+
+  const resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal })
+  if (!resp.ok) throw new Error(await errFromResp(resp))
+
+  const reader = resp.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() || ''
+    for (const line of lines) {
+      const t = line.trim()
+      if (!t || !t.startsWith('data:')) continue
+      const data = t.slice(5).trim()
+      if (data === '[DONE]') return
+      try {
+        const j = JSON.parse(data)
+        const delta = j.choices?.[0]?.delta
+        // 思考链（DeepSeek reasoning_content）
+        if (delta?.reasoning_content) {
+          onChunk({ type: 'thinking', text: delta.reasoning_content })
+        }
+        // 正式回复
+        const c = delta?.content || j.choices?.[0]?.message?.content
+        if (c) onChunk({ type: 'content', text: c })
+      } catch { /* skip */ }
+    }
+  }
+}
+
+/** Ollama 原生格式 (NDJSON) */
+async function ollamaChat({ apiBase, model, temperature, maxTokens, topP, messages, signal, onChunk }) {
+  // GitHub Pages (HTTPS) 部署时无法访问本地 Ollama
+  if (location.protocol === 'https:' && location.hostname !== 'localhost') {
+    throw new Error('当前为 HTTPS 远程部署，无法访问本地 Ollama。请使用云端 API 模型。')
+  }
+  const url = 'http://127.0.0.1:11434/api/chat'
+
+  const body = {
+    model,
+    messages: messages.map(m => ({ role: m.role, content: m.content })),
+    stream: true,
+    options: { temperature, num_predict: maxTokens, top_p: topP },
+  }
+
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal,
+  })
+  if (!resp.ok) throw new Error(await errFromResp(resp))
+
+  const reader = resp.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let inThink = false
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() || ''
+    for (const line of lines) {
+      const t = line.trim()
+      if (!t) continue
+      try {
+        const j = JSON.parse(t)
+        if (j.done) return
+        const c = j.message?.content
+        if (!c) continue
+
+        // 检测 DeepSeek R1 的 思考 标签
+        let text = c
+        while (text) {
+          if (!inThink) {
+            const thinkStart = text.indexOf('<｜end▁of▁thinking｜>')
+            if (thinkStart === -1) {
+              onChunk({ type: 'content', text })
+              break
+            }
+            // 输出  前的普通内容
+            if (thinkStart > 0) {
+              onChunk({ type: 'content', text: text.slice(0, thinkStart) })
+            }
+            text = text.slice(thinkStart + 7) // 跳过 '思考'
+            inThink = true
+          } else {
+            const thinkEnd = text.indexOf('<｜end▁of▁thinking｜>')
+            if (thinkEnd === -1) {
+              onChunk({ type: 'thinking', text })
+              break
+            }
+            if (thinkEnd > 0) {
+              onChunk({ type: 'thinking', text: text.slice(0, thinkEnd) })
+            }
+            text = text.slice(thinkEnd + 8) // 跳过 '思考'
+            inThink = false
+          }
+        }
+      } catch { /* skip */ }
+    }
+  }
+}
+
+async function errFromResp(resp) {
+  try {
+    const t = await resp.text()
+    const j = JSON.parse(t)
+    return j.error?.message || j.message || `HTTP ${resp.status}`
+  } catch {
+    return `HTTP ${resp.status}`
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "XIYUE AI",
+  "short_name": "XIYUE",
+  "description": "AI 智能对话",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1a1a2e",
+  "theme_color": "#6366f1",
+  "icons": [
+    { "src": "/xiyue.png", "sizes": "any", "type": "image/png" }
+  ]
+}
