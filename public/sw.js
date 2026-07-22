@@ -14,6 +14,8 @@ self.addEventListener('install', (e) => {
 })
 
 self.addEventListener('fetch', (e) => {
+  // 只处理 http/https 请求，忽略 chrome-extension 等
+  if (!e.request.url.startsWith('http')) return
   e.respondWith(
     caches.match(e.request).then((r) => r || fetch(e.request))
   )
