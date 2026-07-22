@@ -39,6 +39,12 @@ onMounted(async () => {
     window.visualViewport.addEventListener('resize', adjustHeight)
     window.visualViewport.addEventListener('scroll', adjustHeight)
   }
+
+  // 阻止下拉刷新（Android WebView）
+  document.body.addEventListener('touchmove', (e) => {
+    if (e.target.closest('.topic-list, .message-list, .asset-list, .settings-body')) return
+    e.preventDefault()
+  }, { passive: false })
 })
 </script>
 
