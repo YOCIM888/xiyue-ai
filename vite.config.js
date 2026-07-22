@@ -16,6 +16,12 @@ export default defineConfig({
       '/ollama-api': {
         target: 'http://127.0.0.1:11434',
         rewrite: (path) => path.replace('/ollama-api', '/api'),
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq) => {
+            proxyReq.removeHeader('origin')
+            proxyReq.removeHeader('referer')
+          })
+        },
       },
     },
   },

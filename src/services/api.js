@@ -68,7 +68,9 @@ async function ollamaChat({ apiBase, model, temperature, maxTokens, topP, messag
   if (location.protocol === 'https:' && location.hostname !== 'localhost') {
     throw new Error('当前为 HTTPS 远程部署，无法访问本地 Ollama。请使用云端 API 模型。')
   }
-  const url = '/ollama-api/chat'
+  // localhost / 127.0.0.1 直连，局域网走 Vite 代理
+  const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1'
+  const url = isLocal ? 'http://127.0.0.1:11434/api/chat' : '/ollama-api/chat'
 
   const body = {
     model,
