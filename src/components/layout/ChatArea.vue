@@ -54,7 +54,10 @@ function scrollToTop() {
 defineExpose({ scrollToTop })
 
 onMounted(() => {
-  window.__scrollToTop = () => msgListRef.value?.scrollToTop()
+  window.__scrollToTop = () => {
+    const el = document.querySelector('.message-list')
+    if (el) el.scrollTo({ top: 0, behavior: 'smooth' })
+  }
 
   if (topicId.value) {
     chatStore.loadMessages(topicId.value)
