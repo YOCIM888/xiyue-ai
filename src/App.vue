@@ -39,27 +39,6 @@ onMounted(async () => {
     window.visualViewport.addEventListener('resize', adjustHeight)
     window.visualViewport.addEventListener('scroll', adjustHeight)
   }
-
-  // 禁用 Android WebView 下拉刷新（更激进）
-  const isWebView = /wv|WebView/i.test(navigator.userAgent) || /Android/i.test(navigator.userAgent)
-  if (isWebView) {
-    let startY = 0
-    document.addEventListener('touchstart', (e) => {
-      startY = e.touches[0]?.clientY || 0
-    }, { passive: true })
-    document.addEventListener('touchmove', (e) => {
-      // 只要下拉就阻止，除非在明确的滚动容器内
-      if (!e.target.closest('.topic-list, .message-list, .asset-list, .settings-body, .ae-content')) {
-        e.preventDefault()
-        return
-      }
-      // 在滚动容器内：仅在顶部继续下拉时阻止（防止 overscroll 触发 WebView 刷新）
-      const container = e.target.closest('.topic-list, .message-list, .asset-list, .settings-body, .ae-content')
-      if (container && container.scrollTop <= 0 && e.touches[0]?.clientY > startY) {
-        e.preventDefault()
-      }
-    }, { passive: false })
-  }
 })
 </script>
 
