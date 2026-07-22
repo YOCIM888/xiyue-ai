@@ -6,19 +6,23 @@
       <router-view />
     </div>
     <SettingsPanel ref="settingsPanel" />
+    <AssetPanel ref="assetPanel" />
     <UIModal />
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, provide } from 'vue'
 import Sidebar from './components/layout/Sidebar.vue'
 import TopBar from './components/layout/TopBar.vue'
 import SettingsPanel from './components/settings/SettingsPanel.vue'
+import AssetPanel from './components/assets/AssetPanel.vue'
 import UIModal from './components/common/UIModal.vue'
 import { loadSystemPrompt } from './utils/storage'
 
 const settingsPanel = ref(null)
+const assetPanel = ref(null)
+provide('assetPanel', assetPanel)
 
 onMounted(async () => {
   // PWA 安装事件

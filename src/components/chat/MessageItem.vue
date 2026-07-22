@@ -45,6 +45,9 @@
         <button class="btn-action" @click="copyContent" title="复制">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
         </button>
+        <button class="btn-action" @click="saveToAssets" title="保存到资产">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+        </button>
         <button v-if="isLastAi" class="btn-action" @click="chatStore.regenerate()" title="重新生成">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
         </button>
@@ -69,6 +72,7 @@ import { ref, computed } from 'vue'
 import MarkdownRenderer from '../common/MarkdownRenderer.vue'
 import { useSettingsStore } from '../../stores/settings'
 import { useChatStore } from '../../stores/chat'
+import { useAssetsStore } from '../../stores/assets'
 
 const settings = useSettingsStore()
 const chatStore = useChatStore()
@@ -107,6 +111,13 @@ async function confirmDelete(idx) {
 
 function copyContent() {
   navigator.clipboard.writeText(props.message.content).catch(() => {})
+}
+
+function saveToAssets() {
+  const assetsStore = useAssetsStore()
+  const title = 'AI 回复 ' + new Date().toLocaleString()
+  assetsStore.saveFromMessage(props.message.content, title)
+  window.__ui?.showToast('已保存到资产', 'success')
 }
 </script>
 

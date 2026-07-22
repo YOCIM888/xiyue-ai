@@ -90,6 +90,12 @@ export const useChatStore = defineStore('chat', () => {
       messages.value.push({ role: 'assistant', thinking: fullThinking || undefined, content: fullContent })
       saveMessages(topicId)
       topics.touchTopic(topicId)
+
+      // 首轮对话自动生成标题
+      const userCount = messages.value.filter(m => m.role === 'user').length
+      if (userCount === 1) {
+        generateTitle(topicId, userContent, fullContent)
+      }
     } catch (err) {
       if (err.name !== 'AbortError') {
         messages.value.push({ role: 'assistant', content: `❌ 错误: ${err.message}` })
@@ -149,6 +155,31 @@ export const useChatStore = defineStore('chat', () => {
     messages.value.splice(idx, 1)
     const topics = useTopicsStore()
     saveMessages(topics.currentTopicId)
+  }
+
+  // 自动生成话题标题
+  async function generateTitle(topicId, userMsg, aiReply) {
+    const settings = useSettingsStore()
+    const topics = useTopicsStore()
+    try {
+      const prompt = `请用 3~8 个字概括以下对话的主题，只返回标题，不要加引号或句号。\n用户：${userMsg.slice(0, 100)}\nAI：${aiReply.slice(0, 200)}`
+      const controller = new AbortController()
+      let title = ''
+      await sendChatRequest({
+        apiBase: settings.apiBase,
+        apiKey: settings.apiKey,
+        model: settings.model,
+        temperature: 0.3,
+        maxTokens: 50,
+        topP: 0.9,
+        thinkingEnabled: false,
+        messages: [{ role: 'user', content: prompt }],
+        signal: controller.signal,
+        onChunk: ({ text }) => { title += text },
+      })
+      title = title.trim().replace(/[""「」『』《》]/g, '').slice(0, 20)
+      if (title) topics.renameTopic(topicId, title)
+    } catch { /* 静默失败 */ }
   }
 
   function buildSystemPrompt() {

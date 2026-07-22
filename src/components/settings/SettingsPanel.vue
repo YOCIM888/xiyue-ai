@@ -147,7 +147,12 @@
           <!-- 数据管理 -->
           <section class="setting-section">
             <h3>数据管理</h3>
-            <button class="btn-danger" @click="clearAllData">清除所有数据</button>
+            <div class="data-actions">
+              <button class="btn-secondary" @click="exportAssets">📥 导出资产</button>
+              <button class="btn-secondary" @click="triggerImportAssets">📤 导入资产</button>
+              <input ref="importInput" type="file" accept=".json" style="display:none" @change="importAssets" />
+            </div>
+            <button class="btn-danger" @click="clearAllData" style="margin-top:10px">清除所有数据</button>
           </section>
         </div>
 
@@ -162,11 +167,13 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
+import { useAssetsStore } from '../../stores/assets'
 
 const settings = useSettingsStore()
 const visible = ref(false)
 const showKey = ref(false)
 const fileInput = ref(null)
+const importInput = ref(null)
 
 // Ollama 本地模型
 const ollamaOpen = ref(false)
@@ -295,6 +302,37 @@ async function clearAllData() {
     localStorage.clear()
     location.reload()
   }
+}
+
+function exportAssets() {
+  const assetsStore = useAssetsStore()
+  const json = assetsStore.exportData()
+  const blob = new Blob([json], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'xiyue-assets-' + new Date().toISOString().slice(0, 10) + '.json'
+  a.click()
+  URL.revokeObjectURL(url)
+  window.__ui?.showToast('资产已导出', 'success')
+}
+
+function triggerImportAssets() { importInput.value?.click() }
+
+async function importAssets(e) {
+  const file = e.target.files?.[0]
+  if (!file) return
+  try {
+    const text = await file.text()
+    const assetsStore = useAssetsStore()
+    const before = assetsStore.assets.length
+    assetsStore.importData(text)
+    const added = assetsStore.assets.length - before
+    window.__ui?.showToast(`导入完成，新增 ${added} 条`, 'success')
+  } catch {
+    window.__ui?.showToast('导入失败：文件格式错误', 'error')
+  }
+  e.target.value = ''
 }
 </script>
 
@@ -562,6 +600,9 @@ input[type="range"] {
 .btn-danger:hover {
   background: var(--danger-bg);
 }
+
+.data-actions { display: flex; gap: 8px; margin-bottom: 8px; }
+.data-actions .btn-secondary { flex: 1; }
 
 .btn-primary {
   padding: 12px 24px;
