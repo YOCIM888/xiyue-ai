@@ -106,10 +106,15 @@ async function ollamaChat({ apiBase, model, temperature, maxTokens, topP, messag
       try {
         const j = JSON.parse(t)
         if (j.done) return
+
+        // 新版 Ollama 可能将思考内容放在独立字段
+        const think = j.message?.thinking
+        if (think) onChunk({ type: 'thinking', text: think })
+
         const c = j.message?.content
         if (!c) continue
 
-        // 解析 DeepSeek R1 的 <think>...</think> 标签
+        // 解析 <think>...</think> 标签
         let text = c
         while (text) {
           if (!inThink) {
