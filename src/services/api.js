@@ -93,6 +93,8 @@ async function ollamaChat({ apiBase, model, temperature, maxTokens, topP, messag
   let inThink = false
   const TAG_OPEN = '<think>'
   const TAG_CLOSE = '</think>'
+  const TAG_OPEN2 = '<thinking>'
+  const TAG_CLOSE2 = '</thinking>'
 
   while (true) {
     const { done, value } = await reader.read()
@@ -114,20 +116,30 @@ async function ollamaChat({ apiBase, model, temperature, maxTokens, topP, messag
         const c = j.message?.content
         if (!c) continue
 
-        // 解析 <think>...</think> 标签
+        // 解析 <think> / <thinking> 标签
         let text = c
         while (text) {
           if (!inThink) {
-            const idx = text.indexOf(TAG_OPEN)
+            let idx = text.indexOf(TAG_OPEN)
+            let tagLen = TAG_OPEN.length
+            if (idx === -1) {
+              idx = text.indexOf(TAG_OPEN2)
+              tagLen = TAG_OPEN2.length
+            }
             if (idx === -1) { onChunk({ type: 'content', text }); break }
             if (idx > 0) onChunk({ type: 'content', text: text.slice(0, idx) })
-            text = text.slice(idx + TAG_OPEN.length)
+            text = text.slice(idx + tagLen)
             inThink = true
           } else {
-            const idx = text.indexOf(TAG_CLOSE)
+            let idx = text.indexOf(TAG_CLOSE)
+            let tagLen = TAG_CLOSE.length
+            if (idx === -1) {
+              idx = text.indexOf(TAG_CLOSE2)
+              tagLen = TAG_CLOSE2.length
+            }
             if (idx === -1) { onChunk({ type: 'thinking', text }); break }
             if (idx > 0) onChunk({ type: 'thinking', text: text.slice(0, idx) })
-            text = text.slice(idx + TAG_CLOSE.length)
+            text = text.slice(idx + tagLen)
             inThink = false
           }
         }
