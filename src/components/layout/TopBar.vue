@@ -1,6 +1,6 @@
 <template>
   <header class="topbar">
-    <h1 class="title">XIYUE AI</h1>
+    <h1 class="title" @click="$emit('scroll-top')" title="回到顶部">XIYUE AI</h1>
     <div class="actions">
       <button class="btn-icon" @click="settingsStore.$patch({}); emit('open-settings')" title="设置">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -15,7 +15,7 @@
 import { useSettingsStore } from '../../stores/settings'
 
 const settingsStore = useSettingsStore()
-const emit = defineEmits(['open-settings'])
+const emit = defineEmits(['open-settings', 'scroll-top'])
 </script>
 
 <style scoped>

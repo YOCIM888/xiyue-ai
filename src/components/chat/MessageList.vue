@@ -48,7 +48,7 @@
 </template>
 
 <script setup>
-import { ref, watch, nextTick } from 'vue'
+import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import MessageItem from './MessageItem.vue'
 import MarkdownRenderer from '../common/MarkdownRenderer.vue'
 
@@ -58,6 +58,8 @@ const props = defineProps({
   streamingThinking: { type: String, default: '' },
   isLoading: { type: Boolean, default: false },
 })
+
+const emit = defineEmits(['away-from-bottom'])
 
 const listRef = ref(null)
 const thinkOpen = ref(true)
@@ -70,10 +72,32 @@ function scrollToBottom() {
   })
 }
 
+function scrollToTop() {
+  if (listRef.value) {
+    listRef.value.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+}
+
+function checkScroll() {
+  if (!listRef.value) return
+  const el = listRef.value
+  const dist = el.scrollHeight - el.scrollTop - el.clientHeight
+  emit('away-from-bottom', dist > 200)
+}
+
+onMounted(() => {
+  listRef.value?.addEventListener('scroll', checkScroll)
+})
+onUnmounted(() => {
+  listRef.value?.removeEventListener('scroll', checkScroll)
+})
+
 watch(() => props.messages.length, scrollToBottom)
 watch(() => props.streamingContent, scrollToBottom)
 watch(() => props.streamingThinking, scrollToBottom)
 watch(() => props.isLoading, scrollToBottom, { immediate: true })
+
+defineExpose({ scrollToBottom, scrollToTop })
 </script>
 
 <style scoped>

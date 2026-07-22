@@ -2,7 +2,7 @@
   <div class="app-container">
     <Sidebar />
     <div class="main-area">
-      <TopBar @open-settings="settingsPanel?.open()" />
+      <TopBar @open-settings="settingsPanel?.open()" @scroll-top="window.__scrollToTop?.()" />
       <router-view />
     </div>
     <SettingsPanel ref="settingsPanel" />
