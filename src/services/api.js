@@ -26,7 +26,6 @@ async function openaiChat({ apiBase, apiKey, model, temperature, maxTokens, topP
   const url = `${apiBase.replace(/\/+$/, '')}/chat/completions`
 
   const body = { model, messages, temperature, max_tokens: Math.max(1, Math.min(maxTokens || 4096, 393216)), top_p: topP, stream: true }
-  // DeepSeek 思考模式（默认开启，需显式关闭）
   if (model.startsWith('deepseek') || apiBase.includes('deepseek')) {
     body.thinking = { type: thinkingEnabled ? 'enabled' : 'disabled' }
   }
@@ -54,11 +53,9 @@ async function openaiChat({ apiBase, apiKey, model, temperature, maxTokens, topP
       try {
         const j = JSON.parse(data)
         const delta = j.choices?.[0]?.delta
-        // 思考链（DeepSeek reasoning_content）
         if (delta?.reasoning_content) {
           onChunk({ type: 'thinking', text: delta.reasoning_content })
         }
-        // 正式回复
         const c = delta?.content || j.choices?.[0]?.message?.content
         if (c) onChunk({ type: 'content', text: c })
       } catch { /* skip */ }
@@ -68,11 +65,9 @@ async function openaiChat({ apiBase, apiKey, model, temperature, maxTokens, topP
 
 /** Ollama 原生格式 (NDJSON) */
 async function ollamaChat({ apiBase, model, temperature, maxTokens, topP, messages, signal, onChunk }) {
-  // GitHub Pages (HTTPS) 部署时无法访问本地 Ollama
   if (location.protocol === 'https:' && location.hostname !== 'localhost') {
     throw new Error('当前为 HTTPS 远程部署，无法访问本地 Ollama。请使用云端 API 模型。')
   }
-  // 走 Vite 代理（局域网设备也能访问主机的 Ollama）
   const url = '/ollama-api/chat'
 
   const body = {
@@ -94,6 +89,8 @@ async function ollamaChat({ apiBase, model, temperature, maxTokens, topP, messag
   const decoder = new TextDecoder()
   let buffer = ''
   let inThink = false
+  const TAG_OPEN = '<think>'
+  const TAG_CLOSE = '</think>'
 
   while (true) {
     const { done, value } = await reader.read()
@@ -110,31 +107,20 @@ async function ollamaChat({ apiBase, model, temperature, maxTokens, topP, messag
         const c = j.message?.content
         if (!c) continue
 
-        // 检测 DeepSeek R1 的 思考 标签
+        // 解析 DeepSeek R1 的 <think>...</think> 标签
         let text = c
         while (text) {
           if (!inThink) {
-            const thinkStart = text.indexOf('<｜end▁of▁thinking｜>')
-            if (thinkStart === -1) {
-              onChunk({ type: 'content', text })
-              break
-            }
-            // 输出  前的普通内容
-            if (thinkStart > 0) {
-              onChunk({ type: 'content', text: text.slice(0, thinkStart) })
-            }
-            text = text.slice(thinkStart + 7) // 跳过 '思考'
+            const idx = text.indexOf(TAG_OPEN)
+            if (idx === -1) { onChunk({ type: 'content', text }); break }
+            if (idx > 0) onChunk({ type: 'content', text: text.slice(0, idx) })
+            text = text.slice(idx + TAG_OPEN.length)
             inThink = true
           } else {
-            const thinkEnd = text.indexOf('<｜end▁of▁thinking｜>')
-            if (thinkEnd === -1) {
-              onChunk({ type: 'thinking', text })
-              break
-            }
-            if (thinkEnd > 0) {
-              onChunk({ type: 'thinking', text: text.slice(0, thinkEnd) })
-            }
-            text = text.slice(thinkEnd + 8) // 跳过 '思考'
+            const idx = text.indexOf(TAG_CLOSE)
+            if (idx === -1) { onChunk({ type: 'thinking', text }); break }
+            if (idx > 0) onChunk({ type: 'thinking', text: text.slice(0, idx) })
+            text = text.slice(idx + TAG_CLOSE.length)
             inThink = false
           }
         }
