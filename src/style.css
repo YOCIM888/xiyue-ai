@@ -75,15 +75,22 @@
 
 html, body {
   height: 100%;
+  width: 100%;
   overflow: hidden;
   overscroll-behavior: none;
+  -webkit-overscroll-behavior: none;
   -webkit-overflow-scrolling: touch;
   background: var(--bg-primary);
   color: var(--text-primary);
+  position: fixed;
+  inset: 0;
 }
 
 #app {
   height: 100%;
+  width: 100%;
+  overscroll-behavior: none;
+  overflow: hidden;
 }
 
 /* 滚动条样式 */

@@ -199,7 +199,7 @@ function onTopicTouchMove() { clearTimeout(topicLongTimer) }
 /* 历史对话标题 */
 .topic-list-header { padding: 8px 16px 4px; font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
 
-.topic-list { flex: 1; overflow-y: auto; padding: 4px 8px 8px; }
+.topic-list { flex: 1; overflow-y: auto; overscroll-behavior: none; padding: 4px 8px 8px; }
 .empty-hint { text-align: center; padding: 24px; color: var(--text-muted); font-size: 12px; }
 
 .topic-item { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-radius: 8px; cursor: pointer; transition: all 0.15s; margin-bottom: 1px; }

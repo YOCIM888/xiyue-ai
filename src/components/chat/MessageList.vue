@@ -104,6 +104,7 @@ defineExpose({ scrollToBottom, scrollToTop })
 .message-list {
   flex: 1;
   overflow-y: auto;
+  overscroll-behavior: none;
   padding: 16px 0;
 }
 .messages-container {

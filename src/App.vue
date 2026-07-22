@@ -40,10 +40,17 @@ onMounted(async () => {
     window.visualViewport.addEventListener('scroll', adjustHeight)
   }
 
-  // 阻止下拉刷新（Android WebView）
-  document.body.addEventListener('touchmove', (e) => {
-    if (e.target.closest('.topic-list, .message-list, .asset-list, .settings-body')) return
-    e.preventDefault()
+  // 全局禁用下拉刷新
+  let startY = 0
+  document.addEventListener('touchstart', (e) => {
+    startY = e.touches[0]?.clientY || 0
+  }, { passive: true })
+  document.addEventListener('touchmove', (e) => {
+    const dy = e.touches[0]?.clientY - startY
+    // 在页面顶部向下拉 → 阻止浏览器下拉刷新
+    if (dy > 20 && !e.target.closest('.topic-list, .message-list, .asset-list, .settings-body')) {
+      e.preventDefault()
+    }
   }, { passive: false })
 })
 </script>
