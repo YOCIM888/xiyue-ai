@@ -1,5 +1,5 @@
 <template>
-  <div class="markdown-body" v-html="renderedHtml"></div>
+  <div class="markdown-body" v-html="renderedHtml" @click="onClick"></div>
 </template>
 
 <script setup>
@@ -8,41 +8,49 @@ import { marked } from 'marked'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github-dark.css'
 
-// 配置 marked
-marked.setOptions({
-  breaks: true,
-  gfm: true,
-})
+marked.setOptions({ breaks: true, gfm: true })
 
-// 自定义代码块渲染
 const renderer = new marked.Renderer()
+let codeIdx = 0
 renderer.code = function({ text, lang }) {
+  const id = codeIdx++
+  const encoded = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
   let highlighted = ''
   if (lang && hljs.getLanguage(lang)) {
-    try {
-      highlighted = hljs.highlight(text, { language: lang }).value
-    } catch {
-      highlighted = hljs.highlightAuto(text).value
-    }
+    try { highlighted = hljs.highlight(text, { language: lang }).value } catch { highlighted = hljs.highlightAuto(text).value }
   } else {
     highlighted = hljs.highlightAuto(text).value
   }
-  return `<pre><code class="hljs language-${lang || ''}">${highlighted}</code></pre>`
+  return `<div class="code-block-wrapper" data-code-id="${id}">
+    <div class="code-block-header">
+      <span class="code-lang">${lang || 'code'}</span>
+      <button class="code-copy-btn" data-code="${encoded}" title="复制代码">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+      </button>
+    </div>
+    <pre><code class="hljs language-${lang || ''}">${highlighted}</code></pre>
+  </div>`
 }
 
 marked.use({ renderer })
 
-const props = defineProps({
-  content: { type: String, default: '' },
-})
+const props = defineProps({ content: { type: String, default: '' } })
 
 const renderedHtml = computed(() => {
-  try {
-    return marked.parse(props.content)
-  } catch {
-    return props.content.replace(/</g, '&lt;').replace(/\n/g, '<br>')
-  }
+  try { return marked.parse(props.content) } catch { return props.content.replace(/</g, '&lt;').replace(/\n/g, '<br>') }
 })
+
+function onClick(e) {
+  const btn = e.target.closest('.code-copy-btn')
+  if (!btn) return
+  const raw = btn.dataset.code
+  if (!raw) return
+  const text = raw.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+  navigator.clipboard.writeText(text).then(() => {
+    btn.classList.add('copied')
+    setTimeout(() => btn.classList.remove('copied'), 1500)
+  }).catch(() => {})
+}
 </script>
 
 <style>
@@ -66,11 +74,12 @@ const renderedHtml = computed(() => {
 }
 .markdown-body pre {
   background: #1e1e2e;
-  border-radius: 10px;
+  border-radius: 0 0 10px 10px;
   padding: 16px;
   overflow-x: auto;
-  margin: 10px 0;
+  margin: 0;
   border: 1px solid var(--border-color);
+  border-top: none;
 }
 .markdown-body pre code {
   background: transparent;
@@ -133,4 +142,30 @@ const renderedHtml = computed(() => {
   max-width: 100%;
   border-radius: 8px;
 }
+
+/* 代码块容器 */
+.code-block-wrapper {
+  margin: 10px 0;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.code-block-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 14px;
+  background: #2d2d3f;
+  border: 1px solid var(--border-color);
+  border-bottom: none;
+  border-radius: 10px 10px 0 0;
+}
+.code-lang {
+  font-size: 11px; color: #a0a0b8; text-transform: uppercase; letter-spacing: 0.5px;
+}
+.code-copy-btn {
+  width: 28px; height: 28px; border: none; border-radius: 4px;
+  background: transparent; color: #a0a0b8; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s;
+}
+.code-copy-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
+.code-copy-btn.copied { background: #10b981; color: #fff; }
 </style>

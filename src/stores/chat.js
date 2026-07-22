@@ -161,11 +161,8 @@ export const useChatStore = defineStore('chat', () => {
 
     const parts = []
     if (personaOn && persona.trim()) {
-      // 人设优先：人设放前面，系统提示词作补充
+      // 人设优先：只发人设，忽略系统提示词
       parts.push(persona.trim())
-      if (externalPrompt.trim()) {
-        parts.push('\n\n【补充系统指令】\n' + externalPrompt.trim())
-      }
     } else {
       // 系统提示词优先（默认）
       if (externalPrompt.trim()) {

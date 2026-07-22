@@ -195,7 +195,7 @@ async function fetchOllamaModels() {
         name: m.name,
         size: sizeGb >= 1 ? sizeGb.toFixed(1) + ' GB' : (m.size / (1024 * 1024)).toFixed(0) + ' MB',
       }
-    })
+    }).sort((a, b) => a.name.localeCompare(b.name))
   } catch {
     ollamaModels.value = []
   } finally {
