@@ -1,10 +1,5 @@
 <template>
-  <div class="message-item" :class="message.role"
-    @contextmenu.prevent="onContextMenu"
-    @touchstart="onTouchStart"
-    @touchend="onTouchEnd"
-    @touchmove="onTouchMove"
-  >
+  <div class="message-item" :class="message.role">
     <!-- AI 头像 -->
     <div v-if="message.role === 'assistant'" class="message-avatar">
       <img src="/xiyue.png" class="avatar-img" alt="AI" />
@@ -12,7 +7,7 @@
 
     <!-- 用户消息删除（气泡左边） -->
     <div class="user-actions" v-if="message.role === 'user'">
-      <button class="btn-action user-del" @click="chatStore.deleteMessage(index)" title="删除">
+      <button class="btn-action user-del" @click="confirmDelete(index)" title="删除">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
       </button>
     </div>
@@ -42,7 +37,7 @@
         <button v-if="isLastAi" class="btn-action" @click="chatStore.continueResponse()" title="继续生成">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
-        <button class="btn-action danger" @click="chatStore.deleteMessage(index)" title="删除">
+        <button class="btn-action danger" @click="confirmDelete(index)" title="删除">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
         </button>
       </div>
@@ -73,22 +68,9 @@ const props = defineProps({
 
 const thinkOpen = ref(true)
 
-// 长按检测
-let longPressTimer = null
-let longPressTriggered = false
-
-function onTouchStart(e) {
-  longPressTriggered = false
-  longPressTimer = setTimeout(() => {
-    longPressTriggered = true
-    chatStore.deleteMessage(props.index)
-  }, 800)
-}
-function onTouchEnd() { clearTimeout(longPressTimer) }
-function onTouchMove() { clearTimeout(longPressTimer) }
-
-function onContextMenu(e) {
-  chatStore.deleteMessage(props.index)
+async function confirmDelete(idx) {
+  const ok = await window.__ui?.showConfirm('确定删除这条消息吗？')
+  if (ok) chatStore.deleteMessage(idx)
 }
 
 function copyContent() {
