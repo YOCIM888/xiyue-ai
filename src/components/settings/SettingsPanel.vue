@@ -40,7 +40,7 @@
             <h3>模型选择</h3>
             <div class="preset-grid">
               <button
-                v-for="p in settings.modelPresets"
+                v-for="p in cloudPresets"
                 :key="p.label"
                 class="preset-btn"
                 :class="{ active: settings.apiBase === p.base && settings.model === p.model }"
@@ -48,6 +48,29 @@
               >
                 {{ p.label }}
               </button>
+            </div>
+
+            <!-- Ollama 本地模型（可折叠） -->
+            <div class="ollama-section">
+              <button class="ollama-toggle" @click="toggleOllama">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline :points="ollamaOpen ? '6 15 12 9 18 15' : '9 18 15 12 9 6'"/></svg>
+                Ollama 本地模型
+                <span class="ollama-count" v-if="ollamaModels.length">{{ ollamaModels.length }} 个</span>
+              </button>
+              <div v-if="ollamaOpen" class="ollama-list">
+                <div v-if="ollamaLoading" class="ollama-loading">扫描中…</div>
+                <button
+                  v-for="m in ollamaModels"
+                  :key="m.name"
+                  class="preset-btn ollama-item"
+                  :class="{ active: settings.baseUrl === '/ollama' && settings.model === m.name }"
+                  @click="selectOllamaModel(m.name)"
+                >
+                  {{ m.name }}
+                  <span class="ollama-size">{{ m.size }}</span>
+                </button>
+                <div v-if="!ollamaLoading && ollamaModels.length === 0" class="ollama-empty">无法连接 Ollama 服务</div>
+              </div>
             </div>
           </section>
 
@@ -127,13 +150,53 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
 
 const settings = useSettingsStore()
 const visible = ref(false)
 const showKey = ref(false)
 const fileInput = ref(null)
+
+// Ollama 本地模型
+const ollamaOpen = ref(false)
+const ollamaLoading = ref(false)
+const ollamaModels = ref([])
+
+const cloudPresets = computed(() =>
+  settings.modelPresets.filter(p => p.base !== '/ollama')
+)
+
+function toggleOllama() {
+  ollamaOpen.value = !ollamaOpen.value
+  if (ollamaOpen.value && ollamaModels.value.length === 0) {
+    fetchOllamaModels()
+  }
+}
+
+async function fetchOllamaModels() {
+  ollamaLoading.value = true
+  try {
+    const resp = await fetch('/ollama-api/tags')
+    const data = await resp.json()
+    ollamaModels.value = (data.models || []).map(m => {
+      const sizeGb = m.size / (1024 * 1024 * 1024)
+      return {
+        name: m.name,
+        size: sizeGb >= 1 ? sizeGb.toFixed(1) + ' GB' : (m.size / (1024 * 1024)).toFixed(0) + ' MB',
+      }
+    })
+  } catch {
+    ollamaModels.value = []
+  } finally {
+    ollamaLoading.value = false
+  }
+}
+
+function selectOllamaModel(name) {
+  settings.model = name
+  settings.apiBase = '/ollama'
+}
 
 function open() { visible.value = true }
 function close() { visible.value = false }
@@ -351,6 +414,30 @@ async function clearAllData() {
   color: var(--accent);
   font-weight: 600;
 }
+
+/* Ollama 本地模型 */
+.ollama-section {
+  margin-top: 10px;
+}
+.ollama-toggle {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; padding: 9px 12px;
+  border: 1px solid var(--border-color); border-radius: 8px;
+  background: var(--bg-card); color: var(--text-primary);
+  font-size: 13px; cursor: pointer; font-family: inherit;
+  transition: background 0.15s;
+}
+.ollama-toggle:hover { background: var(--bg-hover); }
+.ollama-count { font-size: 11px; color: var(--text-muted); margin-left: auto; }
+.ollama-list { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+.ollama-loading, .ollama-empty {
+  padding: 10px; font-size: 12px; color: var(--text-muted); text-align: center;
+}
+.ollama-item {
+  display: flex; justify-content: space-between; align-items: center;
+  width: 100%; text-align: left;
+}
+.ollama-size { font-size: 10px; color: var(--text-muted); }
 
 .field {
   margin-bottom: 14px;
