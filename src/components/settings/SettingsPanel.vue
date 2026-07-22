@@ -33,6 +33,14 @@
               </div>
               <input ref="fileInput" type="file" accept="image/*" style="display:none" @change="onFileChange" />
             </div>
+            <!-- TTS 音色 -->
+            <div class="field">
+              <label>朗读音色</label>
+              <select v-model="settings.ttsVoice" class="voice-select" @focus="loadVoices">
+                <option value="">默认音色</option>
+                <option v-for="v in voices" :key="v.name" :value="v.name">{{ v.name }} ({{ v.lang }})</option>
+              </select>
+            </div>
           </section>
 
           <!-- 模型预设 -->
@@ -174,6 +182,7 @@ const visible = ref(false)
 const showKey = ref(false)
 const fileInput = ref(null)
 const importInput = ref(null)
+const voices = ref([])
 
 // Ollama 本地模型
 const ollamaOpen = ref(false)
@@ -216,6 +225,19 @@ function selectOllamaModel(name) {
 }
 
 function open() { visible.value = true }
+
+function loadVoices() {
+  const synth = window.speechSynthesis
+  if (!synth) return
+  const list = synth.getVoices()
+  if (list.length) voices.value = list.filter(v => v.lang.startsWith('zh'))
+  else {
+    // 某些浏览器需要异步加载
+    synth.onvoiceschanged = () => {
+      voices.value = synth.getVoices().filter(v => v.lang.startsWith('zh'))
+    }
+  }
+}
 function close() { visible.value = false }
 
 function triggerUpload() {
@@ -603,6 +625,13 @@ input[type="range"] {
 
 .data-actions { display: flex; gap: 8px; margin-bottom: 8px; }
 .data-actions .btn-secondary { flex: 1; }
+
+.voice-select {
+  width: 100%; padding: 9px 12px; border: 1px solid var(--border-color); border-radius: 8px;
+  background: var(--bg-input); color: var(--text-primary); font-size: 13px;
+  outline: none; font-family: inherit; box-sizing: border-box;
+}
+.voice-select:focus { border-color: var(--accent); }
 
 .btn-primary {
   padding: 12px 24px;

@@ -48,6 +48,9 @@
         <button class="btn-action" @click="saveToAssets" title="保存到资产">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
         </button>
+        <button class="btn-action" :class="{ active: speaking }" @click="toggleSpeak" title="朗读">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+        </button>
         <button v-if="isLastAi" class="btn-action" @click="chatStore.regenerate()" title="重新生成">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
         </button>
@@ -118,6 +121,28 @@ function saveToAssets() {
   const title = 'AI 回复 ' + new Date().toLocaleString()
   assetsStore.saveFromMessage(props.message.content, title)
   window.__ui?.showToast('已保存到资产', 'success')
+}
+
+// TTS 朗读
+const speaking = ref(false)
+function toggleSpeak() {
+  const synth = window.speechSynthesis
+  if (!synth) { window.__ui?.showToast('浏览器不支持朗读', 'error'); return }
+  if (synth.speaking) { synth.cancel(); speaking.value = false; return }
+
+  const u = new SpeechSynthesisUtterance(props.message.content.replace(/[*_~`#>\-\[\]()|]/g, ''))
+  u.lang = 'zh-CN'
+  u.rate = 1.0
+  const voiceName = settings.ttsVoice
+  if (voiceName) {
+    const voices = synth.getVoices()
+    const v = voices.find(x => x.name === voiceName)
+    if (v) u.voice = v
+  }
+  u.onend = () => { speaking.value = false }
+  u.onerror = () => { speaking.value = false }
+  speaking.value = true
+  synth.speak(u)
 }
 </script>
 

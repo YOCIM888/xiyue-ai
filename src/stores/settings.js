@@ -15,6 +15,7 @@ export const useSettingsStore = defineStore('settings', () => {
     thinkingEnabled: false,
     userAvatar: '',
     personaEnabled: false,
+    ttsVoice: '',
   }
 
   const saved = loadSettings()
@@ -30,6 +31,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const thinkingEnabled = ref(saved.thinkingEnabled ?? defaults.thinkingEnabled)
   const userAvatar = ref(saved.userAvatar ?? defaults.userAvatar)
   const personaEnabled = ref(saved.personaEnabled ?? defaults.personaEnabled)
+  const ttsVoice = ref(saved.ttsVoice ?? defaults.ttsVoice)
 
   // 预设模型列表
   const modelPresets = [
@@ -82,6 +84,7 @@ export const useSettingsStore = defineStore('settings', () => {
       thinkingEnabled: thinkingEnabled.value,
       userAvatar: userAvatar.value,
       personaEnabled: personaEnabled.value,
+      ttsVoice: ttsVoice.value,
     })
   }
 
@@ -89,13 +92,13 @@ export const useSettingsStore = defineStore('settings', () => {
 
   // 自动持久化：任何设置变更立刻保存
   watch(
-    [apiKey, apiBase, model, temperature, maxTokens, topP, personaPrompt, userName, thinkingEnabled, userAvatar, personaEnabled],
+    [apiKey, apiBase, model, temperature, maxTokens, topP, personaPrompt, userName, thinkingEnabled, userAvatar, personaEnabled, ttsVoice],
     () => persist(),
     { deep: false }
   )
 
   return {
-    apiKey, apiBase, model, temperature, maxTokens, topP, personaPrompt, userName, thinkingEnabled, userAvatar, personaEnabled,
+    apiKey, apiBase, model, temperature, maxTokens, topP, personaPrompt, userName, thinkingEnabled, userAvatar, personaEnabled, ttsVoice,
     modelPresets, applyPreset, persist, settingsReady, defaults,
   }
 })

@@ -66,8 +66,9 @@
   </div>
 
   <button v-if="!isMobile || !open" class="btn-toggle" @click="open = !open" :title="open ? '收起侧边栏' : '展开侧边栏'">
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <path d="M4 6h16M4 12h16M4 18h16"/><path d="M8 6v12"/>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+      <line x1="5" y1="7" x2="19" y2="7"/>
+      <line x1="5" y1="17" x2="19" y2="17"/>
     </svg>
   </button>
 </template>
