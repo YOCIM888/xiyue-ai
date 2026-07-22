@@ -157,16 +157,20 @@ export const useChatStore = defineStore('chat', () => {
     const externalPrompt = systemPromptRaw || ''
     const persona = settings.personaPrompt || ''
     const userName = settings.userName || ''
+    const personaOn = settings.personaEnabled
 
     const parts = []
-    if (externalPrompt.trim()) {
-      parts.push(externalPrompt.trim())
-    }
-    if (persona.trim() && persona.trim() !== '你是一个有用、友好的AI助手。请用中文回答用户的问题。') {
-      const prefix = externalPrompt.trim()
-        ? '\n\n【补充风格指令 — 优先级低于上述系统设定】'
-        : '【系统指令】'
-      parts.push(`${prefix}\n${persona.trim()}`)
+    if (personaOn && persona.trim()) {
+      // 人设优先：人设放前面，系统提示词作补充
+      parts.push(persona.trim())
+      if (externalPrompt.trim()) {
+        parts.push('\n\n【补充系统指令】\n' + externalPrompt.trim())
+      }
+    } else {
+      // 系统提示词优先（默认）
+      if (externalPrompt.trim()) {
+        parts.push(externalPrompt.trim())
+      }
     }
     if (userName.trim()) {
       parts.push(`\n\n【用户信息】\n当前与你对话的用户名叫"${userName.trim()}"，请在交流中使用此名称称呼用户，并以此判断用户身份。`)

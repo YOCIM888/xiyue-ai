@@ -117,8 +117,18 @@
 
           <!-- 人设提示词 -->
           <section class="setting-section">
-            <h3>人设提示词（第二优先级）</h3>
-            <p class="hint">系统提示词（最高优先级）请在 <code>public/prompt/system.md</code> 文件中手动编辑，修改后刷新页面生效。</p>
+            <div class="section-header">
+              <h3>人设提示词</h3>
+              <label class="switch-label">
+                <input type="checkbox" v-model="settings.personaEnabled" class="switch-input" />
+                <span class="switch-track">
+                  <span class="switch-thumb"></span>
+                </span>
+                <span class="switch-text">{{ settings.personaEnabled ? '已启用' : '已关闭' }}</span>
+              </label>
+            </div>
+            <p class="hint" v-if="settings.personaEnabled">当前优先遵守人设提示词，系统提示词作为补充。</p>
+            <p class="hint" v-else>关闭状态，仅遵守系统提示词。</p>
             <textarea
               v-model="settings.personaPrompt"
               class="persona-input"
@@ -514,6 +524,30 @@ input[type="range"] {
 .persona-input:focus {
   border-color: var(--accent);
 }
+
+/* 开关 */
+.section-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 8px;
+}
+.section-header h3 { margin: 0; }
+.switch-label {
+  display: flex; align-items: center; gap: 8px; cursor: pointer;
+}
+.switch-input { display: none; }
+.switch-track {
+  width: 42px; height: 24px; border-radius: 12px;
+  background: var(--border-color); position: relative; transition: background 0.2s;
+}
+.switch-input:checked + .switch-track { background: var(--accent); }
+.switch-thumb {
+  position: absolute; top: 2px; left: 2px;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: #fff; transition: left 0.2s;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+}
+.switch-input:checked + .switch-track .switch-thumb { left: 20px; }
+.switch-text { font-size: 12px; color: var(--text-muted); }
 
 .btn-danger {
   padding: 10px 20px;
