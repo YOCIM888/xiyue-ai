@@ -104,7 +104,7 @@ function send() {
   const okImages = attachments.value.filter(a => a.type === 'image' && a.status === 'ok' && a.dataUrl)
   if (okImages.length) {
     const model = settings.model
-    const isVision = /gpt|gemini|claude|vision|vl|glm-5|qwen3\.7|kimi-k3|deepseek-v4/i.test(model)
+    const isVision = /gpt|gemini|claude|vision|vl|glm-5|qwen3\.7|kimi-k3|deepseek-v4|minicpm|llava|bakllava|cogvlm|obsidian|phi.*vision/i.test(model)
     if (!isVision) {
       window.__ui?.showToast('当前模型不支持解析图片', 'error')
       return
