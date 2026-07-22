@@ -108,7 +108,7 @@ async function ollamaChat({ apiBase, model, temperature, maxTokens, topP, messag
         if (j.done) return
 
         // 新版 Ollama 可能将思考内容放在独立字段
-        const think = j.message?.thinking
+        const think = j.message?.thinking || j.message?.thinking_content
         if (think) onChunk({ type: 'thinking', text: think })
 
         const c = j.message?.content
