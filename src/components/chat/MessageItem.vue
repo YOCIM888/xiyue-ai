@@ -22,8 +22,22 @@
           <MarkdownRenderer :content="message.thinking" />
         </div>
       </div>
+
+      <!-- 用户消息：文件附件折叠 -->
+      <div v-if="message.role === 'user' && fileBlocks.length" class="file-blocks">
+        <div v-for="(fb, fi) in fileBlocks" :key="fi" class="thinking-block file-block">
+          <button class="thinking-toggle" @click="fb.open = !fb.open">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline :points="fb.open ? '6 15 12 9 18 15' : '9 18 15 12 9 6'"/></svg>
+            📎 {{ fb.name }}
+          </button>
+          <div v-if="fb.open" class="thinking-content file-content">
+            <pre>{{ fb.text }}</pre>
+          </div>
+        </div>
+      </div>
+
       <div class="message-content">
-        <MarkdownRenderer :content="message.content" />
+        <MarkdownRenderer :content="displayContent" />
       </div>
 
       <!-- AI 消息操作按钮 -->
@@ -67,6 +81,24 @@ const props = defineProps({
 })
 
 const thinkOpen = ref(true)
+
+// 解析用户消息中的文件附件
+const fileBlocks = computed(() => {
+  if (props.message.role !== 'user') return []
+  const blocks = []
+  const content = props.message.content || ''
+  const regex = /\[📎 (.+?)\]\n([\s\S]*?)(?=\n\[📎|$)/g
+  let match
+  while ((match = regex.exec(content)) !== null) {
+    blocks.push({ name: match[1], text: match[2].trim(), open: false })
+  }
+  return blocks
+})
+
+const displayContent = computed(() => {
+  if (props.message.role !== 'user') return props.message.content
+  return (props.message.content || '').replace(/\[📎 .+?\]\n[\s\S]*?(?=\n\[📎|$)/g, '').trim()
+})
 
 async function confirmDelete(idx) {
   const ok = await window.__ui?.showConfirm('确定删除这条消息吗？')
@@ -144,5 +176,9 @@ function copyContent() {
   padding: 10px 14px; font-size: 13px; color: var(--text-muted);
   line-height: 1.7; border-top: 1px solid var(--border-color);
   max-height: 400px; overflow-y: auto;
+}
+.file-content pre {
+  margin: 0; white-space: pre-wrap; word-break: break-all;
+  font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px;
 }
 </style>

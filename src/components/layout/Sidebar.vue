@@ -23,8 +23,13 @@
           class="topic-item"
           :class="{ active: topic.id === topics.currentTopicId }"
           @click="handleSwitch(topic.id)"
+          @contextmenu.prevent="onTopicCtx(topic.id, $event)"
+          @touchstart="onTopicTouchStart(topic.id, $event)"
+          @touchend="onTopicTouchEnd"
+          @touchmove="onTopicTouchMove"
         >
-          <svg class="topic-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          <svg v-if="topic.pinned" class="topic-icon pin" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>
+          <svg v-else class="topic-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
           <span class="topic-title" :title="topic.title">{{ topic.title }}</span>
           <button class="btn-delete" @click.stop="handleDelete(topic.id)" title="删除">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
@@ -93,6 +98,27 @@ function handleSwitch(id) {
   router.push(`/chat/${id}`)
   if (isMobile.value) open.value = false
 }
+
+// 长按/右键置顶
+let topicLongTimer = null
+function onTopicCtx(id, e) {
+  const topic = topics.topics.find(t => t.id === id)
+  if (!topic) return
+  window.__ui?.showMenu(e.clientX, e.clientY, [
+    { label: topic.pinned ? '取消置顶' : '置顶', action: () => topics.togglePin(id) },
+  ])
+}
+function onTopicTouchStart(id, e) {
+  topicLongTimer = setTimeout(() => {
+    const topic = topics.topics.find(t => t.id === id)
+    if (!topic) return
+    window.__ui?.showMenu(e.touches[0].clientX, e.touches[0].clientY, [
+      { label: topic.pinned ? '取消置顶' : '置顶', action: () => topics.togglePin(id) },
+    ])
+  }, 600)
+}
+function onTopicTouchEnd() { clearTimeout(topicLongTimer) }
+function onTopicTouchMove() { clearTimeout(topicLongTimer) }
 
 async function handleDelete(id) {
   const ok = await window.__ui?.showConfirm('确定删除这个对话吗？') || false
@@ -238,6 +264,9 @@ async function handleDelete(id) {
 .topic-icon {
   flex-shrink: 0;
   color: var(--text-muted);
+}
+.topic-icon.pin {
+  color: var(--accent);
 }
 .topic-title {
   flex: 1;

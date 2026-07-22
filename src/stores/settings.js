@@ -61,8 +61,6 @@ export const useSettingsStore = defineStore('settings', () => {
     { label:'Claude opus4.8' ,model:'Claude opus4.8', base: 'https://api.anthropic.com'},
     // Ollama 本地模型
     { label: 'Ollama', model: 'deepseek-r1:7b', base: '/ollama' },
-    // 自定义
-    { label: '自定义 / 本地模型', model: '', base: '' },
   ]
 
   function applyPreset(preset) {

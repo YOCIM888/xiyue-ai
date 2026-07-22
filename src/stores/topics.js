@@ -13,13 +13,18 @@ export const useTopicsStore = defineStore('topics', () => {
   )
 
   const sortedTopics = computed(() =>
-    [...topics.value].sort((a, b) => b.updatedAt - a.updatedAt)
+    [...topics.value].sort((a, b) => {
+      if (a.pinned && !b.pinned) return -1
+      if (!a.pinned && b.pinned) return 1
+      return b.updatedAt - a.updatedAt
+    })
   )
 
   function createTopic(title = '新对话') {
     const topic = {
       id: nextId++,
       title,
+      pinned: false,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     }
@@ -65,14 +70,21 @@ export const useTopicsStore = defineStore('topics', () => {
     }
   }
 
+  function togglePin(id) {
+    const topic = topics.value.find(t => t.id === id)
+    if (!topic) return
+    topic.pinned = !topic.pinned
+    persist()
+  }
+
   function persist() {
     saveTopics(topics.value.map(t => ({
-      id: t.id, title: t.title, createdAt: t.createdAt, updatedAt: t.updatedAt,
+      id: t.id, title: t.title, pinned: t.pinned, createdAt: t.createdAt, updatedAt: t.updatedAt,
     })))
   }
 
   return {
     topics, currentTopicId, currentTopic, sortedTopics,
-    createTopic, deleteTopic, renameTopic, switchTopic, touchTopic, ensureTopic,
+    createTopic, deleteTopic, renameTopic, switchTopic, touchTopic, ensureTopic, togglePin,
   }
 })
