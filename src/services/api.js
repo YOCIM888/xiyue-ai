@@ -15,10 +15,26 @@ export async function sendChatRequest({
 }) {
   const isOllama = apiBase.includes('/ollama')
 
+  // 转换消息格式：支持图片
+  const apiMessages = messages.map(m => {
+    if (m.role === 'user' && m.images?.length) {
+      // 图片消息
+      if (isOllama) {
+        return { role: 'user', content: m.content, images: m.images.map(i => i.split(',')[1] || i) }
+      } else {
+        // OpenAI 视觉格式
+        const parts = m.images.map(i => ({ type: 'image_url', image_url: { url: i } }))
+        parts.push({ type: 'text', text: m.content })
+        return { role: 'user', content: parts }
+      }
+    }
+    return { role: m.role, content: m.content }
+  })
+
   if (isOllama) {
-    return ollamaChat({ apiBase, model, temperature, maxTokens, topP, messages, signal, onChunk })
+    return ollamaChat({ apiBase, model, temperature, maxTokens, topP, messages: apiMessages, signal, onChunk })
   }
-  return openaiChat({ apiBase, apiKey, model, temperature, maxTokens, topP, messages, signal, onChunk, thinkingEnabled })
+  return openaiChat({ apiBase, apiKey, model, temperature, maxTokens, topP, messages: apiMessages, signal, onChunk, thinkingEnabled })
 }
 
 /** OpenAI 兼容格式 (SSE) */

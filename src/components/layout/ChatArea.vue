@@ -43,8 +43,10 @@ const messages = computed(() => chatStore.messages)
 const msgListRef = ref(null)
 const showScrollBtn = ref(false)
 
-function handleSend(content) {
-  chatStore.sendMessage(content)
+function handleSend(data) {
+  const text = typeof data === 'string' ? data : data.text
+  const images = typeof data === 'string' ? [] : (data.images || [])
+  chatStore.sendMessage(text, images)
 }
 
 // 暴露给 TopBar：点击 LOGO 滚到顶部

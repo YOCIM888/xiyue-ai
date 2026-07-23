@@ -31,7 +31,7 @@ export const useChatStore = defineStore('chat', () => {
     localStorage.setItem(`chat_messages_${topicId}`, JSON.stringify(messages.value))
   }
 
-  async function sendMessage(userContent) {
+  async function sendMessage(userContent, images = []) {
     const topics = useTopicsStore()
     const settings = useSettingsStore()
 
@@ -39,21 +39,21 @@ export const useChatStore = defineStore('chat', () => {
     const topicId = topics.currentTopicId
     if (!topicId) return
 
-    // 添加用户消息
-    messages.value.push({ role: 'user', content: userContent })
+    // 添加用户消息（含图片）
+    messages.value.push({ role: 'user', content: userContent, images: images.length ? images : undefined })
     saveMessages(topicId)
     topics.touchTopic(topicId)
 
-    // 自动更新标题（取前20个字符）
+    // 自动更新标题
     if (messages.value.filter(m => m.role === 'user').length === 1) {
       topics.renameTopic(topicId, userContent.slice(0, 30) + (userContent.length > 30 ? '…' : ''))
     }
 
-    // 构建消息列表（带系统提示词）
+    // 构建消息列表
     const systemPrompt = buildSystemPrompt()
     const chatMessages = systemPrompt
-      ? [{ role: 'system', content: systemPrompt }, ...messages.value.map(m => ({ role: m.role, content: m.content }))]
-      : messages.value.map(m => ({ role: m.role, content: m.content }))
+      ? [{ role: 'system', content: systemPrompt }, ...messages.value.map(m => ({ role: m.role, content: m.content, images: m.images }))]
+      : messages.value.map(m => ({ role: m.role, content: m.content, images: m.images }))
 
     isLoading.value = true
     streamingContent.value = ''

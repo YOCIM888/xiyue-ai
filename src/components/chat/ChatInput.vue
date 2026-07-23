@@ -106,7 +106,7 @@ function send() {
     full = full ? full + '\n[附图片: ' + okImages.map(i => i.name).join(', ') + ']' : '[附图片: ' + okImages.map(i => i.name).join(', ') + ']'
   }
 
-  emit('send', full)
+  emit('send', { text: full, images: okImages.map(i => i.dataUrl) })
   input.value = ''
   attachments.value = []
   nextTick(autoResize)
