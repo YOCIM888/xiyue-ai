@@ -6,7 +6,12 @@ let nextId = Date.now()
 
 export const useTopicsStore = defineStore('topics', () => {
   const topics = ref(loadTopics() || [])
-  const currentTopicId = ref(topics.value[0]?.id ?? null)
+  // 默认进入最新对话
+  const currentTopicId = ref(
+    topics.value.length
+      ? topics.value.reduce((a, b) => (b.updatedAt > a.updatedAt ? b : a)).id
+      : null
+  )
 
   const currentTopic = computed(() =>
     topics.value.find(t => t.id === currentTopicId.value) ?? null
