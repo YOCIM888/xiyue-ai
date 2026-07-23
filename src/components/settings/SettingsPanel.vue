@@ -74,7 +74,10 @@
                   :class="{ active: settings.baseUrl === '/ollama' && settings.model === m.name }"
                   @click="selectOllamaModel(m.name)"
                 >
-                  {{ m.name }}
+                  <span class="ollama-name">{{ m.name }}</span>
+                  <span class="ollama-tags">
+                    <span v-for="t in m.tags" :key="t.label" class="ollama-tag" :style="{ background: t.color }">{{ t.label }}</span>
+                  </span>
                   <span class="ollama-size">{{ m.size }}</span>
                 </button>
                 <div v-if="!ollamaLoading && ollamaModels.length === 0" class="ollama-empty">无法连接 Ollama 服务</div>
@@ -189,6 +192,24 @@ const ollamaOpen = ref(false)
 const ollamaLoading = ref(false)
 const ollamaModels = ref([])
 
+// 模型能力标签映射
+const modelCapabilities = [
+  { match: /qwen3\.5/i, tags: [{ label: 'vision', color: '#8b5cf6' }, { label: 'tools', color: '#f59e0b' }, { label: 'thinking', color: '#6366f1' }, { label: '256K', color: '#6b7280' }] },
+  { match: /deepseek-r1/i, tags: [{ label: 'tools', color: '#f59e0b' }, { label: 'thinking', color: '#6366f1' }, { label: '128K', color: '#6b7280' }] },
+  { match: /deepseek-coder/i, tags: [{ label: 'thinking', color: '#6366f1' }, { label: '16K', color: '#6b7280' }] },
+  { match: /ornith/i, tags: [{ label: 'thinking', color: '#6366f1' }, { label: '256K', color: '#6b7280' }] },
+  { match: /minicpm-v/i, tags: [{ label: 'vision', color: '#8b5cf6' }, { label: 'thinking', color: '#6366f1' }, { label: '256K', color: '#6b7280' }] },
+  { match: /minicpm5/i, tags: [{ label: 'thinking', color: '#6366f1' }, { label: '128K', color: '#6b7280' }] },
+  { match: /deepseek-janus-pro/i, tags: [{ label: 'vision', color: '#8b5cf6' }, { label: 'thinking', color: '#6366f1' }, { label: '16K', color: '#6b7280' }] },
+]
+
+function getModelTags(name) {
+  for (const c of modelCapabilities) {
+    if (c.match.test(name)) return c.tags
+  }
+  return []
+}
+
 const cloudPresets = computed(() =>
   settings.modelPresets.filter(p => p.base !== '/ollama')
 )
@@ -210,6 +231,7 @@ async function fetchOllamaModels() {
       return {
         name: m.name,
         size: sizeGb >= 1 ? sizeGb.toFixed(1) + ' GB' : (m.size / (1024 * 1024)).toFixed(0) + ' MB',
+        tags: getModelTags(m.name),
       }
     }).sort((a, b) => a.name.localeCompare(b.name))
   } catch {
@@ -504,10 +526,16 @@ async function importAssets(e) {
   padding: 10px; font-size: 12px; color: var(--text-muted); text-align: center;
 }
 .ollama-item {
-  display: flex; justify-content: space-between; align-items: center;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
   width: 100%; text-align: left;
 }
-.ollama-size { font-size: 10px; color: var(--text-muted); }
+.ollama-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ollama-tags { display: flex; gap: 3px; flex-wrap: wrap; }
+.ollama-tag {
+  padding: 1px 6px; border-radius: 4px; font-size: 9px;
+  font-weight: 600; color: #fff; letter-spacing: 0.3px; text-transform: uppercase;
+}
+.ollama-size { font-size: 10px; color: var(--text-muted); flex-shrink: 0; }
 
 .field {
   margin-bottom: 14px;
