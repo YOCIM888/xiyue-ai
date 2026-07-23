@@ -5,16 +5,14 @@
       <img src="/xiyue.png" class="avatar-img" alt="AI" />
     </div>
 
-    <!-- 用户消息行（气泡+头像在一行） -->
-    <div v-if="message.role === 'user'" class="user-row">
-
-    <!-- 用户消息删除（气泡左边） -->
-    <div class="user-actions" v-if="message.role === 'user'">
+    <!-- 用户消息：删除按钮（气泡左边） -->
+    <div v-if="message.role === 'user'" class="user-actions">
       <button class="btn-action user-del" @click="confirmDelete(index)" title="删除">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
       </button>
     </div>
 
+    <!-- 消息气泡（AI 和用户共用） -->
     <div class="message-bubble">
       <div v-if="message.thinking" class="thinking-block">
         <button class="thinking-toggle" @click="thinkOpen = !thinkOpen">
@@ -26,7 +24,6 @@
         </div>
       </div>
 
-      <!-- 用户消息：文件附件折叠 -->
       <div v-if="message.role === 'user' && fileBlocks.length" class="file-blocks">
         <div v-for="(fb, fi) in fileBlocks" :key="fi" class="thinking-block file-block">
           <button class="thinking-toggle" @click="fb.open = !fb.open">
@@ -43,7 +40,6 @@
         <MarkdownRenderer :content="displayContent" />
       </div>
 
-      <!-- AI 消息操作按钮 -->
       <div class="message-actions" v-if="message.role === 'assistant'">
         <button class="btn-action" @click="copyContent" title="复制">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
@@ -66,9 +62,12 @@
       </div>
     </div>
 
-    </div> <!-- user-row -->
+    <!-- 用户头像 -->
+    <div v-if="message.role === 'user'" class="message-avatar user-avatar">
+      <img :src="userAvatar || '/yocim.png'" class="avatar-img" alt="我" />
+    </div>
 
-    <!-- 用户消息图片（在气泡下方） -->
+    <!-- 用户消息图片 -->
     <div v-if="message.role === 'user' && message.images?.length" class="user-images">
       <img v-for="(img, i) in message.images" :key="i" :src="img" class="user-img" />
     </div>
@@ -94,7 +93,6 @@ const props = defineProps({
 
 const thinkOpen = ref(true)
 
-// 解析用户消息中的文件附件
 const fileBlocks = computed(() => {
   if (props.message.role !== 'user') return []
   const blocks = []
@@ -128,7 +126,6 @@ function saveToAssets() {
   window.__ui?.showToast('已保存到资产', 'success')
 }
 
-// TTS 朗读
 const speaking = ref(false)
 function toggleSpeak() {
   const synth = window.speechSynthesis
@@ -156,14 +153,7 @@ function toggleSpeak() {
   display: flex; gap: 10px; padding: 10px 0;
 }
 .message-item.assistant { flex-direction: row; }
-.message-item.user {
-  flex-direction: column;
-  align-items: flex-end;
-}
-.user-row {
-  display: flex; flex-direction: row; justify-content: flex-end;
-  width: 100%;
-}
+.message-item.user { flex-direction: row; justify-content: flex-end; flex-wrap: wrap; }
 
 .message-avatar {
   flex-shrink: 0; width: 36px; height: 36px; border-radius: 50%;
@@ -182,10 +172,7 @@ function toggleSpeak() {
 
 .message-content { line-height: 1.7; font-size: 14px; color: var(--text-primary); }
 
-.message-actions {
-  display: flex; gap: 2px; margin-top: 6px;
-  opacity: 0; transition: opacity 0.2s;
-}
+.message-actions { display: flex; gap: 2px; margin-top: 6px; opacity: 0; transition: opacity 0.2s; }
 .message-item:hover .message-actions { opacity: 1; }
 
 .btn-action {
@@ -196,17 +183,9 @@ function toggleSpeak() {
 .btn-action:hover { background: var(--bg-hover); color: var(--text-primary); }
 .btn-action.danger:hover { background: var(--danger-bg); color: var(--danger); }
 
-/* 用户消息删除按钮（气泡左边，深一点） */
-.user-actions {
-  display: flex; align-items: center; margin-right: 4px;
-  opacity: 0; transition: opacity 0.2s;
-}
+.user-actions { display: flex; align-items: center; margin-right: 4px; opacity: 0; transition: opacity 0.2s; }
 .message-item.user:hover .user-actions { opacity: 1; }
-.user-del {
-  color: var(--text-secondary);
-  background: rgba(0,0,0,0.06);
-  border-radius: 6px;
-}
+.user-del { color: var(--text-secondary); background: rgba(0,0,0,0.06); border-radius: 6px; }
 .user-del:hover { background: var(--danger-bg); color: var(--danger); }
 
 .thinking-block {
@@ -230,9 +209,8 @@ function toggleSpeak() {
   font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px;
 }
 
-/* 用户消息图片 */
 .user-images {
-  display: flex; flex-wrap: wrap; gap: 6px; max-width: 75%;
+  width: 100%; display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end;
 }
 .user-img {
   max-width: 200px; max-height: 200px; border-radius: 10px;
