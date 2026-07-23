@@ -5,6 +5,9 @@
       <img src="/xiyue.png" class="avatar-img" alt="AI" />
     </div>
 
+    <!-- 用户消息行（气泡+头像在一行） -->
+    <div v-if="message.role === 'user'" class="user-row">
+
     <!-- 用户消息删除（气泡左边） -->
     <div class="user-actions" v-if="message.role === 'user'">
       <button class="btn-action user-del" @click="confirmDelete(index)" title="删除">
@@ -63,14 +66,11 @@
       </div>
     </div>
 
-    <!-- 用户消息图片 -->
+    </div> <!-- user-row -->
+
+    <!-- 用户消息图片（在气泡下方） -->
     <div v-if="message.role === 'user' && message.images?.length" class="user-images">
       <img v-for="(img, i) in message.images" :key="i" :src="img" class="user-img" />
-    </div>
-
-    <!-- 用户头像 -->
-    <div v-if="message.role === 'user'" class="message-avatar user-avatar">
-      <img :src="userAvatar || '/yocim.png'" class="avatar-img" alt="我" />
     </div>
   </div>
 </template>
@@ -156,7 +156,14 @@ function toggleSpeak() {
   display: flex; gap: 10px; padding: 10px 0;
 }
 .message-item.assistant { flex-direction: row; }
-.message-item.user { flex-direction: row; justify-content: flex-end; }
+.message-item.user {
+  flex-direction: column;
+  align-items: flex-end;
+}
+.user-row {
+  display: flex; flex-direction: row; justify-content: flex-end;
+  width: 100%;
+}
 
 .message-avatar {
   flex-shrink: 0; width: 36px; height: 36px; border-radius: 50%;

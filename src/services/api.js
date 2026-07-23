@@ -115,6 +115,10 @@ async function ollamaChat({ apiBase, model, temperature, maxTokens, topP, messag
   const TAG_CLOSE = '</think>'
   const TAG_OPEN2 = '<thinking>'
   const TAG_CLOSE2 = '</thinking>'
+  const TAG_OPEN3 = '<｜end▁of▁thinking｜>'
+  const TAG_CLOSE3 = '<｜end▁of▁thinking｜>'
+  const TAG_OPEN4 = '<thought>'
+  const TAG_CLOSE4 = '</thought>'
 
   while (true) {
     const { done, value } = await reader.read()
@@ -142,26 +146,26 @@ async function ollamaChat({ apiBase, model, temperature, maxTokens, topP, messag
           continue
         }
 
-        // 解析 <think> / <thinking> 标签
+        // 解析思考标签（4 种变体）
         let text = c
+        const openTags = [TAG_OPEN, TAG_OPEN2, TAG_OPEN3, TAG_OPEN4]
+        const closeTags = [TAG_CLOSE, TAG_CLOSE2, TAG_CLOSE3, TAG_CLOSE4]
         while (text) {
           if (!inThink) {
-            let idx = text.indexOf(TAG_OPEN)
-            let tagLen = TAG_OPEN.length
-            if (idx === -1) {
-              idx = text.indexOf(TAG_OPEN2)
-              tagLen = TAG_OPEN2.length
+            let idx = -1, tagLen = 0
+            for (const tag of openTags) {
+              idx = text.indexOf(tag)
+              if (idx !== -1) { tagLen = tag.length; break }
             }
             if (idx === -1) { onChunk({ type: 'content', text }); break }
             if (idx > 0) onChunk({ type: 'content', text: text.slice(0, idx) })
             text = text.slice(idx + tagLen)
             inThink = true
           } else {
-            let idx = text.indexOf(TAG_CLOSE)
-            let tagLen = TAG_CLOSE.length
-            if (idx === -1) {
-              idx = text.indexOf(TAG_CLOSE2)
-              tagLen = TAG_CLOSE2.length
+            let idx = -1, tagLen = 0
+            for (const tag of closeTags) {
+              idx = text.indexOf(tag)
+              if (idx !== -1) { tagLen = tag.length; break }
             }
             if (idx === -1) { onChunk({ type: 'thinking', text }); break }
             if (idx > 0) onChunk({ type: 'thinking', text: text.slice(0, idx) })
