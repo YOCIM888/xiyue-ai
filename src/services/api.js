@@ -32,7 +32,7 @@ export async function sendChatRequest({
   })
 
   if (isOllama) {
-    return ollamaChat({ apiBase, model, temperature, maxTokens, topP, messages: apiMessages, signal, onChunk })
+    return ollamaChat({ apiBase, model, temperature, maxTokens, topP, messages: apiMessages, signal, onChunk, thinkingEnabled })
   }
   return openaiChat({ apiBase, apiKey, model, temperature, maxTokens, topP, messages: apiMessages, signal, onChunk, thinkingEnabled })
 }
@@ -80,7 +80,7 @@ async function openaiChat({ apiBase, apiKey, model, temperature, maxTokens, topP
 }
 
 /** Ollama 原生格式 (NDJSON) */
-async function ollamaChat({ apiBase, model, temperature, maxTokens, topP, messages, signal, onChunk }) {
+async function ollamaChat({ apiBase, model, temperature, maxTokens, topP, messages, signal, onChunk, thinkingEnabled }) {
   if (location.protocol === 'https:' && location.hostname !== 'localhost') {
     throw new Error('当前为 HTTPS 远程部署，无法访问本地 Ollama。请使用云端 API 模型。')
   }
@@ -135,6 +135,12 @@ async function ollamaChat({ apiBase, model, temperature, maxTokens, topP, messag
 
         const c = j.message?.content
         if (!c) continue
+
+        if (!thinkingEnabled) {
+          // 思考关闭：全部作为 content
+          onChunk({ type: 'content', text: c })
+          continue
+        }
 
         // 解析 <think> / <thinking> 标签
         let text = c

@@ -63,6 +63,11 @@
       </div>
     </div>
 
+    <!-- 用户消息图片 -->
+    <div v-if="message.role === 'user' && message.images?.length" class="user-images">
+      <img v-for="(img, i) in message.images" :key="i" :src="img" class="user-img" />
+    </div>
+
     <!-- 用户头像 -->
     <div v-if="message.role === 'user'" class="message-avatar user-avatar">
       <img :src="userAvatar || '/yocim.png'" class="avatar-img" alt="我" />
@@ -216,5 +221,14 @@ function toggleSpeak() {
 .file-content pre {
   margin: 0; white-space: pre-wrap; word-break: break-all;
   font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px;
+}
+
+/* 用户消息图片 */
+.user-images {
+  display: flex; flex-wrap: wrap; gap: 6px; max-width: 75%;
+}
+.user-img {
+  max-width: 200px; max-height: 200px; border-radius: 10px;
+  object-fit: cover; border: 1px solid var(--border-color);
 }
 </style>
