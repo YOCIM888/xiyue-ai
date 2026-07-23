@@ -90,7 +90,11 @@ async function ollamaChat({ apiBase, model, temperature, maxTokens, topP, messag
 
   const body = {
     model,
-    messages: messages.map(m => ({ role: m.role, content: m.content })),
+    messages: messages.map(m => {
+      const msg = { role: m.role, content: m.content }
+      if (m.images?.length) msg.images = m.images
+      return msg
+    }),
     stream: true,
     options: { temperature, num_predict: maxTokens, top_p: topP },
   }

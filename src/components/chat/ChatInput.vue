@@ -102,9 +102,7 @@ function send() {
 
   // 图片附件
   const okImages = attachments.value.filter(a => a.type === 'image' && a.status === 'ok' && a.dataUrl)
-  if (okImages.length) {
-    full = full ? full + '\n[附图片: ' + okImages.map(i => i.name).join(', ') + ']' : '[附图片: ' + okImages.map(i => i.name).join(', ') + ']'
-  }
+  // 不在文本中拼图片标记
 
   emit('send', { text: full, images: okImages.map(i => i.dataUrl) })
   input.value = ''
