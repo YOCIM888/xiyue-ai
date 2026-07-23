@@ -244,6 +244,15 @@ async function fetchOllamaModels() {
 function selectOllamaModel(name) {
   settings.model = name
   settings.apiBase = '/ollama'
+  // 本地模型不按 token 计费，输出拉满
+  const tags = getModelTags(name)
+  const ctxTag = tags.find(t => t.label.endsWith('K'))
+  if (ctxTag) {
+    const ctxK = parseInt(ctxTag.label) * 1024
+    settings.maxTokens = Math.min(ctxK, 131072)
+  } else {
+    settings.maxTokens = 65536
+  }
 }
 
 function open() { visible.value = true }
