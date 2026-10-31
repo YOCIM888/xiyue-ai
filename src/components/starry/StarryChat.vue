@@ -797,8 +797,16 @@ async function deleteGroup() {
 }
 
 @media (max-width: 768px) {
+  .chat-head {
+    padding-left: 54px;
+  }
   .back-btn {
     display: flex;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 1px solid var(--border-color);
+    background: var(--bg-primary);
   }
   .messages {
     padding: 12px 12px 8px;

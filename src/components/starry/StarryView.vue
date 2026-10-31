@@ -14,34 +14,82 @@
     </header>
 
     <div class="starry-body">
-      <StarryContacts
-        v-if="!isMobile || mobileView === 'list'"
-        :friends="store.friends"
-        :groups="store.groups"
-        :active-type="store.activeType"
-        :active-id="store.activeId"
-        @select="selectChat"
-        @add="openAddMenu"
-      />
+      <!-- 桌面端：左侧会话栏 + 右侧聊天/圈子 -->
+      <template v-if="!isMobile">
+        <StarryContacts
+          :friends="store.friends"
+          :groups="store.groups"
+          :active-type="store.activeType"
+          :active-id="store.activeId"
+          show-circle-entry
+          :circle-active="desktopMode === 'circle'"
+          @select="selectChat"
+          @add="openAddMenu"
+          @open-circle="openCircle"
+        />
 
-      <StarryChat
-        v-if="store.activeChat && (!isMobile || mobileView === 'chat')"
-        :type="store.activeType"
-        :chat="store.activeChat"
-        @back="mobileView = 'list'"
-        @open-friend="friendDialogRef?.open($event)"
-        @open-group="groupDialogRef?.open($event)"
-        @deleted="onDeleted"
-      />
+        <StarryCircle v-if="desktopMode === 'circle'" />
 
-      <div v-else-if="!isMobile" class="chat-placeholder">
-        <div class="placeholder-icon">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3.5 9.2l5.9-.9L12 3z" /></svg>
+        <StarryChat
+          v-else-if="store.activeChat"
+          :type="store.activeType"
+          :chat="store.activeChat"
+          @back="backToList"
+          @open-friend="friendDialogRef?.open($event)"
+          @open-group="groupDialogRef?.open($event)"
+          @deleted="onDeleted"
+        />
+
+        <div v-else class="chat-placeholder">
+          <div class="placeholder-icon">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3.5 9.2l5.9-.9L12 3z" /></svg>
+          </div>
+          <p class="placeholder-title">选择一位好友或群聊</p>
+          <p class="placeholder-desc">星空的对话只属于这里，不会被主聊天记住</p>
         </div>
-        <p class="placeholder-title">选择一位好友或群聊</p>
-        <p class="placeholder-desc">星空的对话只属于这里，不会被主聊天记住</p>
-      </div>
+      </template>
+
+      <!-- 手机端：聊天 / 通讯录 / 圈子 -->
+      <template v-else>
+        <StarryContacts
+          v-if="mobileView === 'list' && mobileTab === 'chat'"
+          :friends="store.friends"
+          :groups="store.groups"
+          :active-type="store.activeType"
+          :active-id="store.activeId"
+          @select="selectChat"
+          @add="openAddMenu"
+        />
+
+        <StarryDirectory
+          v-else-if="mobileView === 'list' && mobileTab === 'directory'"
+          :friends="store.friends"
+          :groups="store.groups"
+          @select="selectChat"
+          @add="openAddMenu"
+        />
+
+        <StarryCircle
+          v-else-if="mobileView === 'list' && mobileTab === 'circle'"
+        />
+
+        <StarryChat
+          v-if="store.activeChat && mobileView === 'chat'"
+          :type="store.activeType"
+          :chat="store.activeChat"
+          @back="backToList"
+          @open-friend="friendDialogRef?.open($event)"
+          @open-group="groupDialogRef?.open($event)"
+          @deleted="onDeleted"
+        />
+      </template>
     </div>
+
+    <StarryTabBar
+      v-if="isMobile && mobileView === 'list'"
+      :active="mobileTab"
+      @select="switchTab"
+    />
 
     <FriendDialog ref="friendDialogRef" @saved="onFriendSaved" />
     <GroupDialog ref="groupDialogRef" :friends="store.friends" @created="onGroupCreated" />
@@ -53,6 +101,9 @@ import { onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import StarryContacts from './StarryContacts.vue'
 import StarryChat from './StarryChat.vue'
+import StarryDirectory from './StarryDirectory.vue'
+import StarryCircle from './StarryCircle.vue'
+import StarryTabBar from './StarryTabBar.vue'
 import FriendDialog from './FriendDialog.vue'
 import GroupDialog from './GroupDialog.vue'
 import { useStarryStore } from '../../stores/starry'
@@ -68,6 +119,8 @@ const groupDialogRef = ref(null)
 
 const isMobile = ref(window.innerWidth <= 768)
 const mobileView = ref('list')
+const mobileTab = ref('chat')
+const desktopMode = ref('chat')
 
 function checkMobile() {
   isMobile.value = window.innerWidth <= 768
@@ -75,7 +128,26 @@ function checkMobile() {
 
 function selectChat(type, id) {
   store.loadChat(type, id)
-  mobileView.value = 'chat'
+  if (isMobile.value) {
+    mobileView.value = 'chat'
+    mobileTab.value = 'chat'
+  } else {
+    desktopMode.value = 'chat'
+  }
+}
+
+function switchTab(key) {
+  mobileTab.value = key
+  mobileView.value = 'list'
+}
+
+function backToList() {
+  mobileView.value = 'list'
+  mobileTab.value = 'chat'
+}
+
+function openCircle() {
+  desktopMode.value = 'circle'
 }
 
 function openAddMenu(e) {
@@ -104,7 +176,12 @@ function restoreDefaults() {
 
 function onGroupCreated(group) {
   store.loadChat('group', group.id)
-  mobileView.value = 'chat'
+  if (isMobile.value) {
+    mobileView.value = 'chat'
+    mobileTab.value = 'chat'
+  } else {
+    desktopMode.value = 'chat'
+  }
 }
 
 function onFriendSaved() {
@@ -113,6 +190,8 @@ function onFriendSaved() {
 
 function onDeleted() {
   mobileView.value = 'list'
+  mobileTab.value = 'chat'
+  desktopMode.value = 'chat'
 }
 
 function exitStarry() {

@@ -10,6 +10,19 @@
       </button>
     </div>
 
+    <button
+      v-if="showCircleEntry"
+      class="circle-entry"
+      :class="{ active: circleActive }"
+      @click="$emit('open-circle')"
+    >
+      <span class="circle-entry-icon">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3l2 6.2 6.5.3-5.2 3.9 1.9 6.3-5.2-3.7-5.2 3.7 1.9-6.3-5.2-3.9 6.5-.3L12 3z"/></svg>
+      </span>
+      <span class="circle-entry-title">圈子</span>
+      <span class="circle-entry-desc">好友动态</span>
+    </button>
+
     <div v-if="hasAny" class="contacts-list">
       <template v-if="sortedGroups.length">
         <div class="section-label">群聊</div>
@@ -72,9 +85,11 @@ const props = defineProps({
   groups: { type: Array, default: () => [] },
   activeType: { type: String, default: '' },
   activeId: { type: String, default: '' },
+  showCircleEntry: { type: Boolean, default: false },
+  circleActive: { type: Boolean, default: false },
 })
 
-defineEmits(['select', 'add'])
+defineEmits(['select', 'add', 'open-circle'])
 
 const hasAny = computed(() => props.friends.length > 0 || props.groups.length > 0)
 const totalCount = computed(() => props.friends.length + props.groups.length)
@@ -156,6 +171,43 @@ function fmtListTime(ts) {
 .add-btn:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
+}
+
+.circle-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 10px 2px;
+  padding: 9px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-primary);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  transition: all 0.15s;
+}
+.circle-entry:hover {
+  background: var(--bg-hover);
+}
+.circle-entry.active {
+  border-color: var(--accent);
+  background: var(--accent-light);
+}
+.circle-entry-icon {
+  display: flex;
+  align-items: center;
+  color: var(--accent);
+}
+.circle-entry-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.circle-entry-desc {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
 .contacts-list {
