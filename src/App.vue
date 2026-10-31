@@ -2,7 +2,7 @@
   <div class="app-container">
     <Sidebar @open-settings="openSettings" />
     <div class="main-area">
-      <TopBar v-if="!isStarry" />
+      <TopBar v-if="!isImmersive" />
       <router-view />
     </div>
     <SettingsPanel ref="settingsPanel" />
@@ -29,8 +29,8 @@ import { useSettingsStore } from './stores/settings'
 const settings = useSettingsStore()
 const route = useRoute()
 
-// 探索星空使用独立页头，隐藏主聊天顶栏
-const isStarry = computed(() => route.path.startsWith('/starry'))
+// 探索星空 / 梦境推演使用独立页头，隐藏主聊天顶栏
+const isImmersive = computed(() => route.path.startsWith('/starry') || route.path.startsWith('/dream'))
 
 // 全局深浅色主题
 watchEffect(() => {

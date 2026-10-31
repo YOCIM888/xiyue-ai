@@ -27,6 +27,10 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3.5 9.2l5.9-.9L12 3z"/></svg>
           <span>探索星空</span>
         </button>
+        <button class="nav-btn" @click="openDream">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          <span>梦境推演</span>
+        </button>
       </div>
 
       <!-- 历史对话 -->
@@ -157,6 +161,11 @@ function handleSwitch(id) {
 
 function openStarry() {
   router.push('/starry')
+  if (isMobile.value) open.value = false
+}
+
+function openDream() {
+  router.push('/dream')
   if (isMobile.value) open.value = false
 }
 
