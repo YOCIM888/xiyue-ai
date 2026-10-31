@@ -1,8 +1,8 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
-// 已绑定自定义域名 xiyue.yocim.top，GitHub Pages 部署时资源使用根路径
-const base = '/'
+// 使用相对资源路径，同时兼容 GitHub Pages 项目路径与自定义域名
+const base = './'
 
 // 链接识别：抓取任意网页正文（仅开发/预览服务器可用）
 function linkReader() {
