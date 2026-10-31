@@ -39,29 +39,28 @@
 }
 
 /* 暗色模式 */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg-primary: #1a1a2e;
-    --bg-sidebar: #16162a;
-    --bg-input: #222240;
-    --bg-card: #222240;
-    --bg-hover: #2a2a4a;
-    --bg-active: #2e2e55;
-    --bg-code: #2a2a44;
-    --border-color: #2e2e4a;
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg-primary: #1a1a2e;
+  --bg-sidebar: #16162a;
+  --bg-input: #222240;
+  --bg-card: #222240;
+  --bg-hover: #2a2a4a;
+  --bg-active: #2e2e55;
+  --bg-code: #2a2a44;
+  --border-color: #2e2e4a;
 
-    --text-primary: #e4e4ed;
-    --text-secondary: #a0a0b8;
-    --text-muted: #6a6a88;
+  --text-primary: #e4e4ed;
+  --text-secondary: #a0a0b8;
+  --text-muted: #6a6a88;
 
-    --accent: #818cf8;
-    --accent-hover: #6366f1;
-    --accent-light: #1e1e40;
-    --accent-shadow: rgba(129, 140, 248, 0.15);
+  --accent: #818cf8;
+  --accent-hover: #6366f1;
+  --accent-light: #1e1e40;
+  --accent-shadow: rgba(129, 140, 248, 0.15);
 
-    --danger: #ef4444;
-    --danger-bg: #3b1010;
-  }
+  --danger: #ef4444;
+  --danger-bg: #3b1010;
 }
 
 /* 全局重置 */

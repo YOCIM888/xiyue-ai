@@ -3,16 +3,39 @@
     <div class="settings-overlay" :class="{ open: visible }" @click.self="close">
       <div class="settings-panel" :class="{ open: visible }">
         <div class="settings-header">
-          <h2>设置</h2>
-          <button class="btn-close" @click="close">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          <button v-if="activeSection" class="btn-back" @click="goMenu" title="返回设置">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
           </button>
+          <h2>{{ activeSection ? currentSection.title : '设置' }}</h2>
         </div>
 
         <div class="settings-body">
+          <!-- 设置菜单 -->
+          <div v-if="!activeSection" class="settings-menu">
+            <button
+              v-for="sec in sections"
+              :key="sec.key"
+              class="menu-item"
+              @click="activeSection = sec.key"
+            >
+              <span class="menu-icon">
+                <svg v-if="sec.key === 'user'" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                <svg v-else-if="sec.key === 'model'" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2"/></svg>
+                <svg v-else-if="sec.key === 'params'" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+                <svg v-else-if="sec.key === 'appearance'" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><circle cx="6.5" cy="12.5" r="1.5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>
+                <svg v-else-if="sec.key === 'prompt'" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                <svg v-else width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+              </span>
+              <span class="menu-text">
+                <span class="menu-title">{{ sec.title }}</span>
+                <span class="menu-desc">{{ sec.desc }}</span>
+              </span>
+              <svg class="menu-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+          </div>
+
           <!-- 用户信息 -->
-          <section class="setting-section">
-            <h3>用户信息</h3>
+          <div v-else-if="activeSection === 'user'" class="section-page">
             <div class="field">
               <label>用户名 / 昵称</label>
               <input v-model="settings.userName" type="text" placeholder="输入你的名字，AI 会用它称呼你…" />
@@ -41,11 +64,11 @@
                 <option v-for="v in voices" :key="v.name" :value="v.name">{{ v.name }} ({{ v.lang }})</option>
               </select>
             </div>
-          </section>
+          </div>
 
-          <!-- 模型预设 -->
-          <section class="setting-section">
-            <h3>模型选择</h3>
+          <!-- 模型设置 -->
+          <div v-else-if="activeSection === 'model'" class="section-page">
+            <h3 class="sub-title">模型选择</h3>
             <div class="preset-grid">
               <button
                 v-for="p in cloudPresets"
@@ -83,11 +106,10 @@
                 <div v-if="!ollamaLoading && ollamaModels.length === 0" class="ollama-empty">无法连接 Ollama 服务</div>
               </div>
             </div>
-          </section>
 
-          <!-- API 配置 -->
-          <section class="setting-section">
-            <h3>API 配置</h3>
+            <div class="divider"></div>
+
+            <h3 class="sub-title">API 配置</h3>
             <div class="field">
               <label>API Base URL</label>
               <input v-model="settings.apiBase" type="text" placeholder="https://api.deepseek.com/v1" />
@@ -106,11 +128,10 @@
                 </button>
               </div>
             </div>
-          </section>
+          </div>
 
           <!-- 参数设置 -->
-          <section class="setting-section">
-            <h3>参数设置</h3>
+          <div v-else-if="activeSection === 'params'" class="section-page">
             <div class="field">
               <label>Temperature ({{ settings.temperature }})</label>
               <input v-model.number="settings.temperature" type="range" min="0" max="2" step="0.1" />
@@ -121,15 +142,116 @@
               <input v-model.number="settings.topP" type="range" min="0" max="1" step="0.05" />
             </div>
             <div class="field">
-              <label>最大 Token 数</label>
-              <input v-model.number="settings.maxTokens" type="number" min="1" max="393216" step="100" />
+              <label>上下文长度</label>
+              <div class="tier-grid">
+                <button
+                  v-for="opt in contextOptions"
+                  :key="opt.value"
+                  class="tier-btn"
+                  :class="{ active: settings.contextLength === opt.value }"
+                  @click="settings.contextLength = opt.value"
+                >
+                  {{ opt.label }}
+                </button>
+              </div>
+              <span class="range-hint">模型单次可接收的最大上下文窗口</span>
             </div>
-          </section>
+            <div class="field">
+              <label>输出长度</label>
+              <div class="tier-grid">
+                <button
+                  v-for="opt in outputOptions"
+                  :key="opt.value"
+                  class="tier-btn"
+                  :class="{ active: settings.maxTokens === opt.value }"
+                  @click="settings.maxTokens = opt.value"
+                >
+                  {{ opt.label }}
+                </button>
+              </div>
+              <span class="range-hint">单次回复可生成的最大 token 数</span>
+            </div>
+          </div>
 
-          <!-- 人设提示词 -->
-          <section class="setting-section">
+          <!-- 外观设置 -->
+          <div v-else-if="activeSection === 'appearance'" class="section-page">
+            <h3 class="sub-title">自定义背景</h3>
+            <div class="field">
+              <div class="bg-upload">
+                <div class="bg-preview" :style="bgPreviewStyle" @click="triggerBgUpload">
+                  <span v-if="!settings.backgroundImage">点击选择图片</span>
+                </div>
+                <div class="avatar-actions">
+                  <button class="btn-secondary" @click="triggerBgUpload">选择图片</button>
+                  <button v-if="settings.backgroundImage" class="btn-secondary" @click="settings.backgroundImage = ''">移除</button>
+                </div>
+              </div>
+              <input ref="bgInput" type="file" accept="image/*" style="display:none" @change="onBgChange" />
+              <span class="range-hint">图片仅保存在本地，不会上传服务器</span>
+            </div>
+
+            <div class="divider"></div>
+
+            <h3 class="sub-title">符号内文字</h3>
+            <p class="hint">为 AI 回复中成对符号内的文字设置颜色、倾斜与加粗。</p>
+            <div class="symbol-list">
+              <div v-for="rule in settings.symbolRules" :key="rule.id" class="symbol-rule">
+                <div class="symbol-row">
+                  <span class="symbol-pair">{{ rule.open }}…{{ rule.close }}</span>
+                  <div class="symbol-controls">
+                    <button class="color-dot" :style="{ background: rule.color }" title="文字颜色" @click="toggleColorPicker(rule.id)"></button>
+                    <button class="fmt-btn" :class="{ active: rule.italic }" title="倾斜" @click="rule.italic = !rule.italic">I</button>
+                    <button class="fmt-btn bold" :class="{ active: rule.bold }" title="加粗" @click="rule.bold = !rule.bold">B</button>
+                    <button v-if="rule.custom" class="fmt-btn danger" title="删除符号" @click="removeRule(rule.id)">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    </button>
+                  </div>
+                </div>
+                <div v-if="colorPickerId === rule.id" class="color-palette">
+                  <button
+                    v-for="c in basicColors"
+                    :key="c.value"
+                    class="color-swatch"
+                    :class="{ active: rule.color.toLowerCase() === c.value }"
+                    :style="{ background: c.value }"
+                    :title="c.name"
+                    @click="setRuleColor(rule, c.value)"
+                  ></button>
+                </div>
+              </div>
+            </div>
+
+            <div class="custom-symbol">
+              <input v-model="newSymbol.open" maxlength="4" placeholder="起始符号，如 （" />
+              <input v-model="newSymbol.close" maxlength="4" placeholder="结束符号，如 ）" />
+              <button class="btn-secondary" @click="addCustomSymbol">添加</button>
+            </div>
+            <span class="range-hint">支持冒号、书名号等成对符号，例如 ：…： 或 《…》</span>
+
+            <div class="divider"></div>
+
+            <h3 class="sub-title">头像显示</h3>
+            <div class="switch-row">
+              <span>隐藏用户头像</span>
+              <label class="switch-label">
+                <input type="checkbox" v-model="settings.hideUserAvatar" class="switch-input" />
+                <span class="switch-track"><span class="switch-thumb"></span></span>
+              </label>
+            </div>
+            <div class="switch-row">
+              <span>隐藏 AI 头像</span>
+              <label class="switch-label">
+                <input type="checkbox" v-model="settings.hideAiAvatar" class="switch-input" />
+                <span class="switch-track"><span class="switch-thumb"></span></span>
+              </label>
+            </div>
+            <p class="hint">开启后对话页面仅显示消息气泡，不显示对应头像。</p>
+          </div>
+
+          <!-- 提示设置 -->
+          <div v-else-if="activeSection === 'prompt'" class="section-page">
             <div class="section-header">
-              <h3>人设提示词</h3>
+              <h3 class="sub-title">人设提示词</h3>
               <label class="switch-label">
                 <input type="checkbox" v-model="settings.personaEnabled" class="switch-input" />
                 <span class="switch-track">
@@ -143,28 +265,21 @@
             <textarea
               v-model="settings.personaPrompt"
               class="persona-input"
-              rows="4"
+              rows="8"
               placeholder="例如：你是一个专业的中文助手..."
             ></textarea>
-          </section>
-
-          <!-- 安装应用 -->
-          <section class="setting-section">
-            <h3>安装到桌面</h3>
-            <p class="hint">将 XIYUE AI 安装为独立应用，支持离线使用。</p>
-            <button class="btn-primary" @click="installApp" style="width:100%">📲 安装应用</button>
-          </section>
+          </div>
 
           <!-- 数据管理 -->
-          <section class="setting-section">
-            <h3>数据管理</h3>
+          <div v-else-if="activeSection === 'data'" class="section-page">
             <div class="data-actions">
               <button class="btn-secondary" @click="exportAssets">📥 导出资产</button>
               <button class="btn-secondary" @click="triggerImportAssets">📤 导入资产</button>
               <input ref="importInput" type="file" accept=".json" style="display:none" @change="importAssets" />
             </div>
-            <button class="btn-danger" @click="clearAllData" style="margin-top:10px">清除所有数据</button>
-          </section>
+            <p class="hint">导出的文件包含全部资产数据，可用于备份或迁移到其他设备。</p>
+            <button class="btn-danger" @click="clearAllData">清除所有数据</button>
+          </div>
         </div>
 
         <div class="settings-footer">
@@ -176,7 +291,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, reactive } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
 import { useAssetsStore } from '../../stores/assets'
 
@@ -186,6 +301,137 @@ const showKey = ref(false)
 const fileInput = ref(null)
 const importInput = ref(null)
 const voices = ref([])
+
+// 设置栏目
+const sections = [
+  { key: 'user', title: '用户信息', desc: '昵称、头像与朗读音色' },
+  { key: 'model', title: '模型设置', desc: '模型选择与 API 配置' },
+  { key: 'params', title: '参数设置', desc: 'Temperature、Top P 与上下文/输出长度' },
+  { key: 'appearance', title: '外观设置', desc: '自定义背景、符号文字样式与头像显示' },
+  { key: 'prompt', title: '提示设置', desc: '人设提示词与启用状态' },
+  { key: 'data', title: '数据管理', desc: '导入导出资产与清除数据' },
+]
+const activeSection = ref('')
+const currentSection = computed(() => sections.find(s => s.key === activeSection.value) || { title: '设置' })
+
+// Token 档位
+const contextOptions = [
+  { label: '32K', value: 32768 },
+  { label: '64K', value: 65536 },
+  { label: '128K', value: 131072 },
+  { label: '256K', value: 262144 },
+  { label: '512K', value: 524288 },
+  { label: '1M', value: 1048576 },
+]
+const outputOptions = [
+  { label: '4K', value: 4096 },
+  { label: '16K', value: 16384 },
+  { label: '32K', value: 32768 },
+  { label: '64K', value: 65536 },
+  { label: '128K', value: 131072 },
+  { label: '384K', value: 393216 },
+]
+
+function goMenu() { activeSection.value = '' }
+
+// 外观设置
+const bgInput = ref(null)
+const colorPickerId = ref('')
+const newSymbol = reactive({ open: '', close: '' })
+const basicColors = [
+  { name: '黑色', value: '#000000' },
+  { name: '白色', value: '#ffffff' },
+  { name: '灰色', value: '#808080' },
+  { name: '红色', value: '#ef4444' },
+  { name: '橙色', value: '#f97316' },
+  { name: '黄色', value: '#eab308' },
+  { name: '绿色', value: '#22c55e' },
+  { name: '青色', value: '#06b6d4' },
+  { name: '蓝色', value: '#3b82f6' },
+  { name: '紫色', value: '#8b5cf6' },
+  { name: '粉色', value: '#ec4899' },
+  { name: '棕色', value: '#92400e' },
+]
+
+const bgPreviewStyle = computed(() => {
+  if (!settings.backgroundImage) return {}
+  return {
+    backgroundImage: `url("${settings.backgroundImage}")`,
+    backgroundSize: 'cover',
+    backgroundPosition: 'center',
+    backgroundRepeat: 'no-repeat',
+  }
+})
+
+function triggerBgUpload() {
+  bgInput.value?.click()
+}
+
+function onBgChange(e) {
+  const file = e.target.files?.[0]
+  if (!file) return
+  const reader = new FileReader()
+  reader.onload = (ev) => {
+    const img = new Image()
+    img.onload = () => {
+      // 等比缩放，最长边不超过 1920px，避免 localStorage 超限
+      const max = 1920
+      const scale = Math.min(1, max / Math.max(img.width, img.height))
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.round(img.width * scale)
+      canvas.height = Math.round(img.height * scale)
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height)
+      settings.backgroundImage = canvas.toDataURL('image/jpeg', 0.85)
+      window.__ui?.showToast('背景已应用', 'success')
+    }
+    img.src = ev.target.result
+  }
+  reader.readAsDataURL(file)
+  e.target.value = ''
+}
+
+function toggleColorPicker(id) {
+  colorPickerId.value = colorPickerId.value === id ? '' : id
+}
+
+function setRuleColor(rule, value) {
+  rule.color = value
+  colorPickerId.value = ''
+}
+
+function addCustomSymbol() {
+  const open = newSymbol.open.trim()
+  const close = newSymbol.close.trim()
+  if (!open || !close) {
+    window.__ui?.showToast('请填写起始和结束符号', 'error')
+    return
+  }
+  if (open.length > 4 || close.length > 4) {
+    window.__ui?.showToast('符号长度不能超过 4 个字符', 'error')
+    return
+  }
+  if (settings.symbolRules.some(r => r.open === open && r.close === close)) {
+    window.__ui?.showToast('该符号已存在', 'error')
+    return
+  }
+  settings.symbolRules.push({
+    id: 'sym-' + Date.now(),
+    open,
+    close,
+    color: '#000000',
+    italic: false,
+    bold: false,
+    custom: true,
+  })
+  newSymbol.open = ''
+  newSymbol.close = ''
+  window.__ui?.showToast('已添加自定义符号', 'success')
+}
+
+function removeRule(id) {
+  settings.symbolRules = settings.symbolRules.filter(r => r.id !== id)
+  if (colorPickerId.value === id) colorPickerId.value = ''
+}
 
 // Ollama 本地模型
 const ollamaOpen = ref(false)
@@ -255,7 +501,10 @@ function selectOllamaModel(name) {
   }
 }
 
-function open() { visible.value = true }
+function open(section = '') {
+  activeSection.value = section
+  visible.value = true
+}
 
 function loadVoices() {
   const synth = window.speechSynthesis
@@ -313,40 +562,6 @@ function selectPreset(preset) {
 function saveAndClose() {
   settings.persist()
   close()
-}
-
-async function installApp() {
-  // 优先使用原生安装提示
-  if (window.__deferredPrompt) {
-    window.__deferredPrompt.prompt()
-    const result = await window.__deferredPrompt.userChoice
-    window.__deferredPrompt = null
-    if (result.outcome === 'accepted') {
-      window.__ui?.showToast('安装成功！', 'success')
-    }
-    return
-  }
-
-  // 备用：显示手动安装引导
-  const ua = navigator.userAgent
-  const isAndroid = /Android/i.test(ua)
-  const isIPhone = /iPhone|iPad|iPod/i.test(ua)
-
-  let guide = ''
-  if (isAndroid) {
-    guide = 'Chrome 右上角 ⋮ → 添加到主屏幕'
-  } else if (isIPhone) {
-    guide = 'Safari 底部 ↑ 分享 → 添加到主屏幕'
-  } else {
-    guide = 'Edge/Chrome 右上角 ⋯ → 应用 → 安装此站点'
-  }
-
-  const protocol = window.location.protocol
-  if (protocol === 'http:') {
-    guide += '\n\n⚠ 当前为 HTTP 连接，部分浏览器限制安装。\n建议用局域网 IP 进行访问'
-  }
-
-  window.__ui?.showConfirm(guide, { confirmText: '知道了', cancelText: '关闭' })
 }
 
 async function clearAllData() {
@@ -428,20 +643,23 @@ async function importAssets(e) {
 .settings-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   padding: 20px 24px;
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
 }
 .settings-header h2 {
+  flex: 1;
+  min-width: 0;
   font-size: 18px;
   font-weight: 700;
   margin: 0;
   color: var(--text-primary);
 }
-.btn-close {
+.btn-back {
   width: 34px;
   height: 34px;
+  flex-shrink: 0;
   border: none;
   border-radius: 8px;
   background: transparent;
@@ -450,9 +668,11 @@ async function importAssets(e) {
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: background 0.15s, color 0.15s;
 }
-.btn-close:hover {
+.btn-back:hover {
   background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .settings-body {
@@ -461,10 +681,71 @@ async function importAssets(e) {
   padding: 20px 24px;
 }
 
-.setting-section {
-  margin-bottom: 24px;
+/* 设置菜单 */
+.settings-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
-.setting-section h3 {
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-card);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: background 0.15s, border-color 0.15s;
+}
+.menu-item:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+.menu-icon {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: var(--accent-light);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.menu-text {
+  flex: 1;
+  min-width: 0;
+}
+.menu-title {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.menu-desc {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.menu-chevron {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+/* 子页面 */
+.section-page {
+  animation: page-in 0.18s ease;
+}
+@keyframes page-in {
+  from { opacity: 0; transform: translateX(8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.sub-title {
   font-size: 14px;
   font-weight: 600;
   color: var(--text-primary);
@@ -472,6 +753,11 @@ async function importAssets(e) {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.divider {
+  height: 1px;
+  background: var(--border-color);
+  margin: 22px 0;
 }
 
 .hint {
@@ -510,6 +796,33 @@ async function importAssets(e) {
   background: var(--bg-hover);
 }
 .preset-btn.active {
+  border-color: var(--accent);
+  background: var(--accent-light);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Token 档位 */
+.tier-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+.tier-btn {
+  padding: 8px 0;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.tier-btn:hover {
+  background: var(--bg-hover);
+}
+.tier-btn.active {
   border-color: var(--accent);
   background: var(--accent-light);
   color: var(--accent);
@@ -627,7 +940,7 @@ input[type="range"] {
   display: flex; align-items: center; justify-content: space-between;
   margin-bottom: 8px;
 }
-.section-header h3 { margin: 0; }
+.section-header .sub-title { margin: 0; }
 .switch-label {
   display: flex; align-items: center; gap: 8px; cursor: pointer;
 }
@@ -685,6 +998,22 @@ input[type="range"] {
   background: var(--accent-hover);
 }
 
+/* 次要按钮 */
+.btn-secondary {
+  padding: 9px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+.btn-secondary:hover {
+  background: var(--bg-hover);
+}
+
 /* 头像上传 */
 .avatar-upload {
   display: flex;
@@ -722,6 +1051,158 @@ input[type="range"] {
 .avatar-actions .btn-secondary {
   font-size: 12px;
   padding: 6px 14px;
+}
+
+/* 外观设置 */
+.bg-upload {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.bg-preview {
+  width: 160px;
+  height: 96px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  border: 2px dashed var(--border-color);
+  background: var(--bg-sidebar);
+  color: var(--text-muted);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+.bg-preview:hover { border-color: var(--accent); }
+
+.symbol-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.symbol-rule {
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-card);
+}
+.symbol-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.symbol-pair {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.symbol-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.color-dot {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border-color);
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+.fmt-btn {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-family: inherit;
+  font-style: italic;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+.fmt-btn.bold { font-style: normal; font-weight: 700; }
+.fmt-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.fmt-btn.active {
+  border-color: var(--accent);
+  background: var(--accent-light);
+  color: var(--accent);
+}
+.fmt-btn.danger:hover {
+  border-color: var(--danger);
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+.color-palette {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--bg-input);
+}
+.color-swatch {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border-color);
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+.color-swatch.active {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.custom-symbol {
+  display: flex;
+  gap: 6px;
+  margin-top: 14px;
+}
+.custom-symbol input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.custom-symbol input:focus { border-color: var(--accent); }
+.custom-symbol .btn-secondary {
+  flex-shrink: 0;
+  font-size: 12px;
+  padding: 8px 14px;
+}
+
+.switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+}
+.switch-row span {
+  font-size: 13px;
+  color: var(--text-primary);
 }
 
 .settings-footer {

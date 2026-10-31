@@ -1,6 +1,6 @@
 <template>
-  <div class="chat-area">
-    <WelcomeScreen v-if="messages.length === 0 && !chatStore.streamingContent && !chatStore.isLoading" @send="handleSend" />
+  <div class="chat-area" :style="chatBgStyle">
+    <WelcomeScreen v-if="messages.length === 0 && !chatStore.streamingContent && !chatStore.isLoading" />
     <MessageList
       v-else
       ref="msgListRef"
@@ -31,11 +31,25 @@ import { useTopicsStore } from '../../stores/topics'
 import MessageList from '../chat/MessageList.vue'
 import ChatInput from '../chat/ChatInput.vue'
 import WelcomeScreen from '../chat/WelcomeScreen.vue'
+import { useSettingsStore } from '../../stores/settings'
 import { computed } from 'vue'
 
 const route = useRoute()
 const chatStore = useChatStore()
 const topicsStore = useTopicsStore()
+const settings = useSettingsStore()
+
+// 自定义聊天背景
+const chatBgStyle = computed(() => {
+  if (!settings.backgroundImage) return {}
+  const overlay = settings.darkMode ? 'rgba(0, 0, 0, 0.35)' : 'rgba(255, 255, 255, 0.35)'
+  return {
+    backgroundImage: `linear-gradient(${overlay}, ${overlay}), url("${settings.backgroundImage}")`,
+    backgroundSize: 'cover',
+    backgroundPosition: 'center',
+    backgroundRepeat: 'no-repeat',
+  }
+})
 
 const props = defineProps({ id: { type: String, default: null } })
 const topicId = computed(() => props.id || route.params.id)

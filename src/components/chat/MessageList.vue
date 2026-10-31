@@ -10,7 +10,7 @@
       />
       <!-- 流式生成中的临时消息 -->
       <div v-if="streamingContent || streamingThinking" class="message assistant">
-        <div class="message-avatar">
+        <div v-if="!settings.hideAiAvatar" class="message-avatar">
           <img src="/xiyue.png" class="avatar-img" alt="AI" />
         </div>
         <div class="message-bubble">
@@ -21,20 +21,20 @@
               思考过程
             </button>
             <div v-if="thinkOpen" class="thinking-content">
-              <MarkdownRenderer :content="streamingThinking" />
+              <MarkdownRenderer :content="streamingThinking" symbol-style />
               <span class="cursor-blink" v-if="!streamingContent">▍</span>
             </div>
           </div>
           <!-- 正式回复 -->
           <div v-if="streamingContent">
-            <MarkdownRenderer :content="streamingContent" />
+            <MarkdownRenderer :content="streamingContent" symbol-style />
             <span class="cursor-blink">▍</span>
           </div>
         </div>
       </div>
       <!-- 加载中但还没内容 -->
       <div v-if="isLoading && !streamingContent && !streamingThinking" class="message assistant">
-        <div class="message-avatar">
+        <div v-if="!settings.hideAiAvatar" class="message-avatar">
           <img src="/xiyue.png" class="avatar-img" alt="AI" />
         </div>
         <div class="message-bubble">
@@ -51,6 +51,9 @@
 import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import MessageItem from './MessageItem.vue'
 import MarkdownRenderer from '../common/MarkdownRenderer.vue'
+import { useSettingsStore } from '../../stores/settings'
+
+const settings = useSettingsStore()
 
 const props = defineProps({
   messages: { type: Array, default: () => [] },

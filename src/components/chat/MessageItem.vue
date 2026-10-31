@@ -1,7 +1,7 @@
 <template>
   <div class="message-item" :class="message.role">
     <!-- AI 头像 -->
-    <div v-if="message.role === 'assistant'" class="message-avatar">
+    <div v-if="message.role === 'assistant' && !settings.hideAiAvatar" class="message-avatar">
       <img src="/xiyue.png" class="avatar-img" alt="AI" />
     </div>
 
@@ -20,7 +20,7 @@
           思考过程
         </button>
         <div v-if="thinkOpen" class="thinking-content">
-          <MarkdownRenderer :content="message.thinking" />
+          <MarkdownRenderer :content="message.thinking" symbol-style />
         </div>
       </div>
 
@@ -37,14 +37,14 @@
       </div>
 
       <div class="message-content">
-        <MarkdownRenderer :content="displayContent" />
+        <MarkdownRenderer :content="displayContent" :symbol-style="message.role === 'assistant'" />
       </div>
 
       <div class="message-actions" v-if="message.role === 'assistant'">
         <button class="btn-action" @click="copyContent" title="复制">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
         </button>
-        <button class="btn-action" @click="saveToAssets" title="保存到资产">
+        <button class="btn-action" @click="saveToAssets" title="保存到文档">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
         </button>
         <button class="btn-action" :class="{ active: speaking }" @click="toggleSpeak" title="朗读">
@@ -63,7 +63,7 @@
     </div>
 
     <!-- 用户头像 -->
-    <div v-if="message.role === 'user'" class="message-avatar user-avatar">
+    <div v-if="message.role === 'user' && !settings.hideUserAvatar" class="message-avatar user-avatar">
       <img :src="userAvatar || '/yocim.png'" class="avatar-img" alt="我" />
     </div>
 
@@ -123,7 +123,7 @@ function saveToAssets() {
   const assetsStore = useAssetsStore()
   const title = 'AI 回复 ' + new Date().toLocaleString()
   assetsStore.saveFromMessage(props.message.content, title)
-  window.__ui?.showToast('已保存到资产', 'success')
+  window.__ui?.showToast('已保存到文档', 'success')
 }
 
 const speaking = ref(false)
@@ -165,10 +165,11 @@ function toggleSpeak() {
 
 .message-bubble { max-width: 75%; min-width: 0; }
 .user .message-bubble {
-  background: var(--accent); color: #fff;
+  background: #dbeafe; color: #1e3a8a;
+  border: 1px solid #bfdbfe;
   border-radius: 16px 4px 16px 16px; padding: 10px 15px;
 }
-.user .message-bubble .message-content { color: #fff; }
+.user .message-bubble .message-content { color: #1e3a8a; }
 
 .message-content { line-height: 1.7; font-size: 14px; color: var(--text-primary); }
 

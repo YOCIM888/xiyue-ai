@@ -2,13 +2,22 @@ import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import { loadSettings, saveSettings } from '../utils/storage'
 
+const defaultSymbolRules = () => [
+  { id: 'sym-paren-cn', open: '（', close: '）', color: '#000000', italic: false, bold: false },
+  { id: 'sym-paren-en', open: '(', close: ')', color: '#000000', italic: false, bold: false },
+  { id: 'sym-brace', open: '{', close: '}', color: '#000000', italic: false, bold: false },
+  { id: 'sym-bracket', open: '[', close: ']', color: '#000000', italic: false, bold: false },
+  { id: 'sym-corner', open: '【', close: '】', color: '#000000', italic: false, bold: false },
+]
+
 export const useSettingsStore = defineStore('settings', () => {
   const defaults = {
     apiKey: '',
     apiBase: 'https://api.deepseek.com',
-    model: 'deepseek-v4-flash',
+    model: 'deepseek-flash',
     temperature: 0.7,
     maxTokens: 32768,
+    contextLength: 131072,
     topP: 0.9,
     personaPrompt: '你是一个有用、友好的AI助手。请用中文回答用户的问题。',
     userName: '',
@@ -16,6 +25,12 @@ export const useSettingsStore = defineStore('settings', () => {
     userAvatar: '',
     personaEnabled: false,
     ttsVoice: '',
+    darkMode: false,
+    linkSkillEnabled: true,
+    backgroundImage: '',
+    symbolRules: defaultSymbolRules(),
+    hideUserAvatar: false,
+    hideAiAvatar: false,
   }
 
   const saved = loadSettings()
@@ -25,6 +40,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const model = ref(saved.model ?? defaults.model)
   const temperature = ref(saved.temperature ?? defaults.temperature)
   const maxTokens = ref(saved.maxTokens ?? defaults.maxTokens)
+  const contextLength = ref(saved.contextLength ?? defaults.contextLength)
   const topP = ref(saved.topP ?? defaults.topP)
   const personaPrompt = ref(saved.personaPrompt ?? defaults.personaPrompt)
   const userName = ref(saved.userName ?? defaults.userName)
@@ -32,35 +48,41 @@ export const useSettingsStore = defineStore('settings', () => {
   const userAvatar = ref(saved.userAvatar ?? defaults.userAvatar)
   const personaEnabled = ref(saved.personaEnabled ?? defaults.personaEnabled)
   const ttsVoice = ref(saved.ttsVoice ?? defaults.ttsVoice)
+  const darkMode = ref(saved.darkMode ?? window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? defaults.darkMode)
+  const linkSkillEnabled = ref(saved.linkSkillEnabled ?? defaults.linkSkillEnabled)
+  const backgroundImage = ref(saved.backgroundImage ?? defaults.backgroundImage)
+  const symbolRules = ref(Array.isArray(saved.symbolRules) && saved.symbolRules.length ? saved.symbolRules : defaults.symbolRules)
+  const hideUserAvatar = ref(saved.hideUserAvatar ?? defaults.hideUserAvatar)
+  const hideAiAvatar = ref(saved.hideAiAvatar ?? defaults.hideAiAvatar)
 
   // 预设模型列表
   const modelPresets = [
     // DeepSeek
-    { label: 'DeepSeek V4 Flash', model: 'deepseek-v4-flash', base: 'https://api.deepseek.com', maxTokens: 32768 },
-    { label: 'DeepSeek V4 Pro', model: 'deepseek-v4-pro', base: 'https://api.deepseek.com', maxTokens: 65536 },
-    //
-    { label: 'XIYUE 1.2 mini',model: 'xiyue-1.2-mini', base:'https://api.yocim.top'},
-    { label: 'XIYUE 1.2 flash',model: 'xiyue-1.2-Flash', base:'https://api.yocim.top'},
-    { label: 'XIYUE 1.2 Plus',model: 'xiyue-1.2-Plus', base:'https://api.yocim.top'},
-    { label: 'XIYUE 1.2 MAX',model: 'xiyue-1.2-MAX', base:'https://api.yocim.top'},
+    { label: 'DeepSeek-V4.1-Flash', model: 'deepseek-flash', base: 'https://api.deepseek.com'},
+    //XIYUE
+    { label: 'XIYUE-2.0-Pro',model: 'xiyue-2.0-Pro', base:'https://api.yocim.top'},
+    { label: 'XIYUE-2.0-Flash',model: 'xiyue-2.0-Flash', base:'https://api.yocim.top'},
     // GLM (智谱AI)
-    { label: 'GLM-5.2', model: 'glm-5.2', base: 'https://open.bigmodel.cn/api/paas/v4/' },
-    { label: 'GLM-5.1', model: 'glm-5.1', base: 'https://open.bigmodel.cn/api/paas/v4/' },
+    { label: 'GLM-5.3', model: 'glm-5.3', base: 'https://open.bigmodel.cn/api/paas/v4/' },
+    { label: 'GLM-5.3-Flash', model: 'glm-5.3-flash', base: 'https://open.bigmodel.cn/api/paas/v4/' },
+    { label: 'GLM-5.3-FlashX', model: 'glm-5.3-flashx', base: 'https://open.bigmodel.cn/api/paas/v4/' },
     // Qwen (通义千问)
-    { label: 'Qwen 3.7 Max', model: 'qwen3.7-max', base: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
-    { label: 'Qwen 3.7 Plus', model: 'qwen3.7-plus', base: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
-    { label: 'Qwen 3.7 Flash', model: 'qwen3.6-flash', base: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+    { label: 'Qwen-3.8-MAX', model: 'qwen3.8-max', base: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+    { label: 'Qwen-3.8-Flash', model: 'qwen3.8-flash', base: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
     // Kimi (月之暗面)
+    { label: 'Kimi K3.1 Pro', model: 'kimi-k3.1-pro', base: 'https://api.moonshot.ai/v1' },
     { label: 'Kimi K3', model: 'kimi-k3', base: 'https://api.moonshot.ai/v1' },
-    // GPT (OpenAI)
-    { label: 'GPT-5.6 sol', model: 'gpt-5.6 sol', base: 'https://api.openai.com/v1' },
-    { label: 'GPT-5.5', model: 'gpt-5.5', base: 'https://api.openai.com/v1' },
-    // Gemini (Google)
-    { label: 'Gemini 3.6 flash', model: 'gemini-3.6-flash', base: 'https://generativelanguage.googleapis.com/v1beta/openai' },
-    { label: 'Gemini 3.6 pro', model: 'gemini-3.6-pro', base: 'https://generativelanguage.googleapis.com/v1beta/openai' },
     // Claude
-    { label: 'Claude Fable-5' ,model:'Claude Fable-5', base: 'https://api.anthropic.com' },
-    { label:'Claude opus4.8' ,model:'Claude opus4.8', base: 'https://api.anthropic.com'},
+    { label: 'Claude Fable 5.1' ,model:'Claude Fable-5.1', base: 'https://api.anthropic.com' },
+    { label:'Claude Opus 5.5' ,model:'Claude opus5.5', base: 'https://api.anthropic.com'},
+    { label:'Claude Haiku 5.5' ,model:'Claude haiku5.5', base: 'https://api.anthropic.com'},
+    // GPT (OpenAI)
+    { label: 'GPT-6 Astra', model: 'gpt-6-astra', base: 'https://api.openai.com/v1' },
+    { label: 'GPT-6.1-sol', model: 'gpt-6-sol', base: 'https://api.openai.com/v1' },
+    { label: 'GPT-6-luna', model: 'gpt-6-luna', base: 'https://api.openai.com/v1' },
+    // Gemini (Google)
+    { label: 'Gemini 4 Carbon', model: 'gemini-4-carbon', base: 'https://generativelanguage.googleapis.com/v1beta/openai' },
+    { label: 'Gemini 4 Argon', model: 'gemini-4-argon', base: 'https://generativelanguage.googleapis.com/v1beta/openai' },
     // Ollama 本地模型
     { label: 'Ollama', model: 'deepseek-r1:7b', base: '/ollama' },
   ]
@@ -78,6 +100,7 @@ export const useSettingsStore = defineStore('settings', () => {
       model: model.value,
       temperature: temperature.value,
       maxTokens: maxTokens.value,
+      contextLength: contextLength.value,
       topP: topP.value,
       personaPrompt: personaPrompt.value,
       userName: userName.value,
@@ -85,6 +108,12 @@ export const useSettingsStore = defineStore('settings', () => {
       userAvatar: userAvatar.value,
       personaEnabled: personaEnabled.value,
       ttsVoice: ttsVoice.value,
+      darkMode: darkMode.value,
+      linkSkillEnabled: linkSkillEnabled.value,
+      backgroundImage: backgroundImage.value,
+      symbolRules: symbolRules.value,
+      hideUserAvatar: hideUserAvatar.value,
+      hideAiAvatar: hideAiAvatar.value,
     })
   }
 
@@ -92,13 +121,15 @@ export const useSettingsStore = defineStore('settings', () => {
 
   // 自动持久化：任何设置变更立刻保存
   watch(
-    [apiKey, apiBase, model, temperature, maxTokens, topP, personaPrompt, userName, thinkingEnabled, userAvatar, personaEnabled, ttsVoice],
+    [apiKey, apiBase, model, temperature, maxTokens, contextLength, topP, personaPrompt, userName, thinkingEnabled, userAvatar, personaEnabled, ttsVoice, darkMode, linkSkillEnabled, backgroundImage, hideUserAvatar, hideAiAvatar],
     () => persist(),
     { deep: false }
   )
+  watch(symbolRules, () => persist(), { deep: true })
 
   return {
-    apiKey, apiBase, model, temperature, maxTokens, topP, personaPrompt, userName, thinkingEnabled, userAvatar, personaEnabled, ttsVoice,
+    apiKey, apiBase, model, temperature, maxTokens, contextLength, topP, personaPrompt, userName, thinkingEnabled, userAvatar, personaEnabled, ttsVoice, darkMode, linkSkillEnabled,
+    backgroundImage, symbolRules, hideUserAvatar, hideAiAvatar,
     modelPresets, applyPreset, persist, settingsReady, defaults,
   }
 })

@@ -7,6 +7,8 @@ import { computed } from 'vue'
 import { marked } from 'marked'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github-dark.css'
+import { useSettingsStore } from '../../stores/settings'
+import { applySymbolStyles } from '../../utils/symbolStyles'
 
 marked.setOptions({ breaks: true, gfm: true })
 
@@ -34,10 +36,21 @@ renderer.code = function({ text, lang }) {
 
 marked.use({ renderer })
 
-const props = defineProps({ content: { type: String, default: '' } })
+const props = defineProps({
+  content: { type: String, default: '' },
+  symbolStyle: { type: Boolean, default: false },
+})
+
+const settings = useSettingsStore()
 
 const renderedHtml = computed(() => {
-  try { return marked.parse(props.content) } catch { return props.content.replace(/</g, '&lt;').replace(/\n/g, '<br>') }
+  let html
+  try {
+    html = marked.parse(props.content)
+  } catch {
+    html = props.content.replace(/</g, '&lt;').replace(/\n/g, '<br>')
+  }
+  return props.symbolStyle ? applySymbolStyles(html, settings.symbolRules) : html
 })
 
 function onClick(e) {
