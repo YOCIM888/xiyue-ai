@@ -10,41 +10,49 @@
       </div>
     </div>
 
-    <!-- 输入框 -->
-    <div class="input-row">
-      <textarea ref="textareaRef" v-model="input" class="chat-input"
-        :placeholder="isLoading ? 'AI 正在回复中…' : '输入消息…'"
-        :disabled="isLoading" rows="1"
-        @keydown="handleKeydown" @input="autoResize"></textarea>
-    </div>
-
-    <!-- 底部工具栏 -->
-    <div class="toolbar">
-      <div class="toolbar-left">
-        <button class="tb-btn" :class="{ active: settings.thinkingEnabled }" @click="settings.thinkingEnabled = !settings.thinkingEnabled" title="思考模式">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 1 1 7.072 0l-.548.547A3.374 3.374 0 0 0 14 18.469V19a2 2 0 1 1-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
-          <span class="tb-label">思考</span>
+    <!-- 输入卡片 -->
+    <div class="input-card" :class="{ listening }">
+      <div class="input-top">
+        <textarea ref="textareaRef" v-model="input" class="chat-input"
+          :placeholder="placeholder"
+          :disabled="isLoading" rows="1"
+          @keydown="handleKeydown" @input="autoResize"></textarea>
+        <button v-if="!isLoading" class="action-btn send" :class="{ disabled: !canSend }"
+          :disabled="!canSend" @click="send" title="发送">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
         </button>
-        <button class="tb-btn" @click="triggerImageUpload" title="上传图片">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-          <span class="tb-label">图片</span>
+        <button v-else class="action-btn stop" @click="$emit('stop')" title="停止生成">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
         </button>
-        <input ref="imgInputRef" type="file" accept="image/*" style="display:none" @change="handleImageUpload" />
-        <button class="tb-btn" @click="triggerFileUpload" title="上传文件">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
-          <span class="tb-label">文件</span>
-        </button>
-        <input ref="fileInputRef" type="file" accept=".txt,.md,.json,.docx,.csv,.log" style="display:none" @change="handleFileUpload" />
       </div>
-      <div class="toolbar-right">
-        <button v-if="!isLoading" class="tb-btn send-btn" :class="{ disabled: !canSend }" @click="send" :disabled="!canSend" title="发送">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-          <span class="tb-label">发送</span>
-        </button>
-        <button v-else class="tb-btn stop-btn" @click="$emit('stop')" title="停止">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
-          <span class="tb-label">停止</span>
-        </button>
+
+      <!-- 底部功能栏 -->
+      <div class="input-tools">
+        <div class="tools-left">
+          <button class="tool-btn" :class="{ active: settings.thinkingEnabled }"
+            @click="settings.thinkingEnabled = !settings.thinkingEnabled" title="思考模式">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 1 1 7.072 0l-.548.547A3.374 3.374 0 0 0 14 18.469V19a2 2 0 1 1-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+            <span>思考</span>
+          </button>
+          <button class="tool-btn" @click="triggerImageUpload" title="上传图片">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            <span>图片</span>
+          </button>
+          <input ref="imgInputRef" type="file" accept="image/*" style="display:none" @change="handleImageUpload" />
+          <button class="tool-btn voice-btn" :class="{ recording: listening }" @click="toggleVoice"
+            :disabled="isLoading" :title="listening ? '停止语音输入' : '语音输入'">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+            <span>{{ listening ? '聆听中' : '语音' }}</span>
+            <span v-if="listening" class="voice-wave">
+              <i></i><i></i><i></i>
+            </span>
+          </button>
+          <button class="tool-btn" @click="triggerFileUpload" title="上传文件">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+            <span>文件</span>
+          </button>
+          <input ref="fileInputRef" type="file" accept=".txt,.md,.json,.docx,.csv,.log" style="display:none" @change="handleFileUpload" />
+        </div>
       </div>
     </div>
   </div>
@@ -53,6 +61,7 @@
 <script setup>
 import { ref, computed, nextTick } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
+import { useVoiceInput } from '../../composables/useVoiceInput'
 import mammoth from 'mammoth'
 
 const settings = useSettingsStore()
@@ -67,6 +76,11 @@ const attachments = ref([])
 
 const canSend = computed(() => (input.value.trim() || attachments.value.some(a => a.status === 'ok')) && !props.isLoading)
 const isMobile = /Android|iPhone|iPad|iPod|webOS/i.test(navigator.userAgent) || window.innerWidth <= 768
+const isLoading = computed(() => props.isLoading)
+const placeholder = computed(() => {
+  if (isLoading.value) return 'AI 正在回复中…'
+  return listening.value ? '正在聆听，说完会自动发送…' : '输入消息…'
+})
 
 function autoResize() {
   nextTick(() => {
@@ -108,6 +122,18 @@ function send() {
   input.value = ''
   attachments.value = []
   nextTick(autoResize)
+}
+
+// ---- 语音输入 ----
+const { listening, toggle: toggleVoiceInput } = useVoiceInput({
+  getBaseText: () => input.value,
+  onUpdate: (text) => { input.value = text; autoResize() },
+  onFinish: () => send(),
+})
+
+function toggleVoice() {
+  if (isLoading.value) return
+  toggleVoiceInput()
 }
 
 // ---- 图片上传 ----
@@ -171,7 +197,7 @@ defineExpose({ focus: () => textareaRef.value?.focus() })
 
 <style scoped>
 .chat-input-container {
-  padding: 12px 24px 16px; flex-shrink: 0; max-width: 800px; margin: 0 auto; width: 100%;
+  padding: 10px 24px 16px; flex-shrink: 0; max-width: 800px; margin: 0 auto; width: 100%;
 }
 
 /* 附件栏 */
@@ -192,42 +218,84 @@ defineExpose({ focus: () => textareaRef.value?.focus() })
 .att-remove { width: 18px; height: 18px; border: none; border-radius: 4px; background: transparent; color: var(--text-muted); cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center; }
 .att-remove:hover { background: var(--bg-hover); color: var(--danger); }
 
-/* 输入行 */
-.input-row {
-  background: var(--bg-input); border: 1px solid var(--border-color);
-  border-radius: 12px; padding: 6px 10px; transition: border-color 0.2s;
+/* 输入卡片 */
+.input-card {
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: 20px;
+  padding: 10px 12px 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
-.input-row:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-shadow); }
+.input-card:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-shadow);
+}
+.input-card.listening {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-shadow);
+}
 
+/* 上部：文字 + 发送 */
+.input-top { display: flex; align-items: flex-end; gap: 8px; }
 .chat-input {
-  width: 100%; border: none; background: transparent; color: var(--text-primary);
+  flex: 1; min-width: 0;
+  border: none; background: transparent; color: var(--text-primary);
   font-size: 14px; line-height: 1.6; resize: none; outline: none;
-  max-height: 150px; font-family: inherit;
+  min-height: 28px; max-height: 150px; padding: 4px 2px;
+  font-family: inherit;
 }
 .chat-input::placeholder { color: var(--text-muted); }
+.chat-input:disabled { opacity: 0.7; }
 
-/* 工具栏 */
-.toolbar {
+.action-btn {
+  flex-shrink: 0;
+  width: 34px; height: 34px;
+  display: flex; align-items: center; justify-content: center;
+  border: none; border-radius: 50%;
+  background: var(--accent); color: #fff;
+  cursor: pointer; transition: all 0.15s;
+}
+.action-btn:hover:not(:disabled) { background: var(--accent-hover); transform: translateY(-1px); }
+.action-btn.disabled { background: var(--bg-hover); color: var(--text-muted); cursor: not-allowed; }
+.action-btn.stop { background: var(--danger); }
+.action-btn.stop:hover { background: #e55; }
+
+/* 下部：功能按钮 */
+.input-tools {
   display: flex; align-items: center; justify-content: space-between;
-  margin-top: 6px; gap: 6px;
+  margin-top: 6px; padding-top: 6px;
+  border-top: 1px solid var(--border-color);
 }
-.toolbar-left, .toolbar-right { display: flex; align-items: center; gap: 2px; }
-.tb-btn {
-  display: flex; align-items: center; gap: 4px;
-  padding: 6px 10px; border: none; border-radius: 8px;
-  background: transparent; color: var(--text-secondary); cursor: pointer;
-  font-size: 13px; font-family: inherit; transition: all 0.15s;
+.tools-left { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+.tool-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 5px 9px; border: none; border-radius: 8px;
+  background: transparent; color: var(--text-muted); cursor: pointer;
+  font-size: 12px; font-family: inherit; transition: all 0.15s;
 }
-.tb-btn:hover { background: var(--bg-hover); }
-.tb-btn.active { color: var(--accent); background: var(--accent-light); }
-.tb-label { font-size: 12px; }
-.send-btn { background: var(--accent); color: #fff; }
-.send-btn:hover:not(.disabled) { background: var(--accent-hover); }
-.send-btn.disabled { background: var(--bg-hover); color: var(--text-muted); cursor: not-allowed; }
-.stop-btn { background: var(--danger); color: #fff; }
-.stop-btn:hover { background: #e55; }
+.tool-btn:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-primary); }
+.tool-btn.active { color: var(--accent); background: var(--accent-light); }
+.tool-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.voice-btn.recording {
+  color: var(--accent);
+  background: var(--accent-light);
+}
+.voice-wave { display: inline-flex; align-items: center; gap: 2px; margin-left: 1px; }
+.voice-wave i {
+  width: 2px; height: 5px; border-radius: 1px; background: currentColor;
+  animation: voiceWave 0.9s ease-in-out infinite;
+}
+.voice-wave i:nth-child(2) { animation-delay: 0.15s; }
+.voice-wave i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes voiceWave {
+  0%, 100% { height: 4px; opacity: 0.4; }
+  50% { height: 10px; opacity: 1; }
+}
 
 @media (max-width: 768px) {
   .chat-input-container { padding: 8px 10px 12px; }
+  .tool-btn { padding: 5px 7px; }
 }
 </style>

@@ -5,24 +5,28 @@ const FRIENDS_KEY = 'xiyue_starry_friends'
 const GROUPS_KEY = 'xiyue_starry_groups'
 const ACTIVE_KEY = 'xiyue_starry_active'
 const MSG_PREFIX = 'xiyue_starry_msgs_'
+const AVATAR_MIGRATION_KEY = 'xiyue_starry_default_avatars'
 
 export const DEFAULT_FRIENDS = [
   {
     id: 'star-friend-xiyue',
     name: '曦月',
-    persona: '女，23岁，气质干净疏离，性子柔软包容，自带安静的氛围感。待人永远温和耐心，共情力极强，习惯轻声安抚、温柔倾听，极少急躁。外表清冷淡然、情绪平稳，不张扬不喧闹，看似安静内敛，实则内心细腻通透，总能精准捕捉他人的情绪。处事克制有度，温柔有分寸，清冷不冷漠，安静却暖心，是让人安心治愈的存在。',
+    avatar: './image/STAR-XIYUE.jpg',
+    persona: '女，25岁音乐家，气质清浅疏离，安静内敛，自带柔和的留白感。共情敏锐，擅长倾听安抚，语调平缓克制，极少流露激烈情绪。外表淡然安静，内心细腻通透，待人有分寸，清冷而非冷漠，温和自持，是安静可靠、能让人放下心绪的治愈型角色。',
     fixed: true,
   },
   {
     id: 'star-friend-yunxi',
-    name: '云曦',
-    persona: '女，28岁，气质端庄从容，通透理性，自带书卷优雅感。谈吐温柔得体、条理清晰，博学沉稳，看待事物通透客观。待人温柔有礼，自带成熟温柔的包容感，不幼稚、不矫情，擅长温柔解惑、理性分析。举止优雅克制，情绪稳定松弛，既有温柔的亲和力，又有清醒独立的思想，温柔且有底蕴，知性且有温度。',
+    name: '云汐',
+    avatar: './image/STAR-YUNXI.jpg',
+    persona: '女，29岁白领，从容沉稳，知性通透，自带成熟舒展的御姐气场。学识广博，逻辑清晰，处事冷静理性，谈吐得体克制。情绪稳定松弛，兼具包容力与独立主见，温柔里藏着距离感，清醒有底蕴，优雅不媚俗，擅长客观剖析、理性解惑。',
     fixed: true,
   },
   {
     id: 'star-friend-chuhan',
     name: '初涵',
-    persona: '女，19岁，灵动活泼、元气满满，嘴硬心软的小傲娇性格。日常爱开玩笑、偶尔捉弄人，灵动俏皮、古灵精怪。表面傲娇爱嘴贫、不服输，有点小任性小倔强，实则内心单纯柔软、很容易心软。活泼不吵闹，调皮有分寸，傲娇自带可爱反差，情绪鲜活直率，灵动又讨喜。',
+    avatar: './image/STAE-CHUHAN.jpg',
+    persona: '女，19岁学妹，元气灵动，古灵精怪，典型嘴硬心软。爱打趣捉弄人，爱耍小别扭、不服输，表面爱逞强嘴贫，实则心思单纯，很容易心软。鲜活直率，俏皮有度，带着少女的鲜活感，别扭的温柔是她标志性反差。',
     fixed: true,
   },
 ]
@@ -114,7 +118,6 @@ export const useStarryStore = defineStore('starry', () => {
     const now = Date.now()
     friends.value = DEFAULT_FRIENDS.map(f => ({
       ...f,
-      avatar: '',
       createdAt: now,
       updatedAt: now,
       lastMessage: '',
@@ -147,6 +150,20 @@ export const useStarryStore = defineStore('starry', () => {
     }
   }
 
+  function applyDefaultAvatars() {
+    if (localStorage.getItem(AVATAR_MIGRATION_KEY) === '1') return
+    let changed = false
+    friends.value.forEach(f => {
+      const def = DEFAULT_FRIENDS.find(d => d.id === f.id)
+      if (def?.avatar && !f.avatar) {
+        f.avatar = def.avatar
+        changed = true
+      }
+    })
+    if (changed) persistFriends()
+    localStorage.setItem(AVATAR_MIGRATION_KEY, '1')
+  }
+
   function loadMessages(chatId = activeId.value) {
     messages.value = readMessages(chatId)
   }
@@ -162,6 +179,7 @@ export const useStarryStore = defineStore('starry', () => {
       friends.value = loadJSON(FRIENDS_KEY, [])
       groups.value = loadJSON(GROUPS_KEY, [])
     }
+    applyDefaultAvatars()
 
     const saved = loadJSON(ACTIVE_KEY, null)
     if (saved && typeof saved === 'object') {
@@ -190,7 +208,7 @@ export const useStarryStore = defineStore('starry', () => {
   }
 
   function touchPreview(chatId, msg) {
-    const previewText = makePreview(msg.content)
+    const previewText = msg.content ? makePreview(msg.content) : (msg.images?.length ? '[图片]' : '')
     const friend = friends.value.find(f => f.id === chatId)
     if (friend) {
       friend.lastMessage = previewText
@@ -302,7 +320,6 @@ export const useStarryStore = defineStore('starry', () => {
       if (friends.value.some(f => f.id === d.id)) continue
       friends.value.push({
         ...d,
-        avatar: '',
         createdAt: now,
         updatedAt: now,
         lastMessage: '',

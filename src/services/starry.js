@@ -61,10 +61,12 @@ export function buildHistory(targetFriendId, messages = []) {
   const mapped = []
 
   for (const m of recent) {
-    if (!m || !m.content) continue
-    const content = String(m.content).slice(0, 1000)
+    if (!m) continue
+    const hasImages = Array.isArray(m.images) && m.images.length > 0
+    if (!m.content && !hasImages) continue
+    const content = String(m.content || (hasImages ? '[图片]' : '')).slice(0, 1000)
     if (m.role === 'user') {
-      mapped.push({ role: 'user', content })
+      mapped.push({ role: 'user', content, ...(hasImages ? { images: m.images } : {}) })
     } else if (m.role === 'character') {
       if (m.senderId === targetFriendId) {
         mapped.push({ role: 'assistant', content })
@@ -74,11 +76,11 @@ export function buildHistory(targetFriendId, messages = []) {
     }
   }
 
-  // 合并相邻同角色消息，提升接口兼容性
+  // 合并相邻同角色消息，提升接口兼容性（含图片的消息单独保留）
   const merged = []
   for (const item of mapped) {
     const last = merged[merged.length - 1]
-    if (last && last.role === item.role) {
+    if (last && last.role === item.role && !last.images && !item.images) {
       last.content += '\n\n' + item.content
     } else {
       merged.push({ ...item })

@@ -54,7 +54,16 @@
             <div v-if="type === 'group' && m.role !== 'user'" class="sender-name">
               {{ m.senderName }}
             </div>
-            <div class="bubble">{{ m.content }}</div>
+            <div v-if="m.images?.length" class="bubble-images">
+              <img
+                v-for="(img, idx) in m.images"
+                :key="idx"
+                :src="img"
+                class="bubble-img"
+                alt="图片"
+              />
+            </div>
+            <div v-if="m.content" class="bubble">{{ m.content }}</div>
             <div class="bubble-time">{{ fmtClock(m.ts) }}</div>
           </div>
         </div>
@@ -72,25 +81,55 @@
     </div>
 
     <footer class="composer">
-      <textarea
-        ref="inputEl"
-        v-model="input"
-        class="composer-input"
-        :placeholder="placeholder"
-        :disabled="store.sending"
-        rows="1"
-        @keydown="onKeydown"
-        @input="autoResize"
-      ></textarea>
-      <button
-        class="send-btn"
-        :class="{ disabled: !canSend }"
-        :disabled="!canSend"
-        title="发送"
-        @click="send"
-      >
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" /></svg>
-      </button>
+      <div v-if="pendingImages.length" class="pending-images">
+        <div v-for="(img, i) in pendingImages" :key="i" class="pending-img">
+          <img :src="img" alt="待发送图片" />
+          <button class="pending-remove" title="移除图片" @click="pendingImages.splice(i, 1)">×</button>
+        </div>
+      </div>
+
+      <div class="composer-card" :class="{ listening }">
+        <div class="composer-top">
+          <textarea
+            ref="inputEl"
+            v-model="input"
+            class="composer-input"
+            :placeholder="placeholder"
+            :disabled="store.sending"
+            rows="1"
+            @keydown="onKeydown"
+            @input="autoResize"
+          ></textarea>
+          <button
+            class="send-btn"
+            :class="{ disabled: !canSend }"
+            :disabled="!canSend"
+            title="发送"
+            @click="send"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" /></svg>
+          </button>
+        </div>
+
+        <div class="composer-tools">
+          <button class="tool-btn" :disabled="store.sending" title="发送图片" @click="triggerImageUpload">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            <span>图片</span>
+          </button>
+          <input ref="imageInput" type="file" accept="image/*" style="display: none" @change="onImagePicked" />
+          <button
+            class="tool-btn voice-btn"
+            :class="{ recording: listening }"
+            :disabled="store.sending"
+            :title="listening ? '停止语音输入' : '语音输入'"
+            @click="toggleVoice"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+            <span>{{ listening ? '聆听中' : '语音' }}</span>
+            <span v-if="listening" class="voice-wave"><i></i><i></i><i></i></span>
+          </button>
+        </div>
+      </div>
     </footer>
   </section>
 </template>
@@ -100,6 +139,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import StarryAvatar from './StarryAvatar.vue'
 import { useStarryStore } from '../../stores/starry'
 import { useSettingsStore } from '../../stores/settings'
+import { useVoiceInput } from '../../composables/useVoiceInput'
 import { generateCharacterReply, isApiConfigured, selectRepliers } from '../../services/starry'
 
 const props = defineProps({
@@ -114,7 +154,20 @@ const settings = useSettingsStore()
 
 const messagesEl = ref(null)
 const inputEl = ref(null)
+const imageInput = ref(null)
 const input = ref('')
+const pendingImages = ref([])
+
+const { listening, toggle: toggleVoiceInput } = useVoiceInput({
+  getBaseText: () => input.value,
+  onUpdate: (text) => { input.value = text; autoResize() },
+  onFinish: () => send(),
+})
+
+function toggleVoice() {
+  if (store.sending) return
+  toggleVoiceInput()
+}
 
 const messages = computed(() => store.messages)
 const userName = computed(() => settings.userName || '我')
@@ -129,11 +182,14 @@ const subtitle = computed(() => {
   return '在线'
 })
 
-const placeholder = computed(() =>
-  typingVisible.value ? '对方正在输入…' : '发消息…'
-)
+const placeholder = computed(() => {
+  if (typingVisible.value) return '对方正在输入…'
+  return listening.value ? '正在聆听，说完会自动发送…' : '发消息…'
+})
 
-const canSend = computed(() => input.value.trim().length > 0 && !store.sending)
+const canSend = computed(() =>
+  (input.value.trim().length > 0 || pendingImages.value.length > 0) && !store.sending
+)
 
 const emptyTitle = computed(() =>
   props.type === 'group' ? `在「${props.chat.name}」聊聊吧` : `和${props.chat.name}聊聊吧`
@@ -194,6 +250,7 @@ watch(messages, () => scrollToBottom(), { deep: true })
 watch(() => store.typingName, () => scrollToBottom())
 watch(() => props.chat.id, () => {
   input.value = ''
+  pendingImages.value = []
   scrollToBottom()
 })
 
@@ -219,6 +276,40 @@ function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
+// ---- 图片发送 ----
+function triggerImageUpload() {
+  imageInput.value?.click()
+}
+
+function onImagePicked(e) {
+  const file = e.target.files?.[0]
+  e.target.value = ''
+  if (!file || !file.type.startsWith('image/')) return
+
+  const reader = new FileReader()
+  reader.onload = (ev) => {
+    const img = new Image()
+    img.onload = () => {
+      const maxSide = 1024
+      const scale = Math.min(1, maxSide / Math.max(img.width, img.height))
+      if (scale === 1) {
+        pendingImages.value.push(ev.target.result)
+        return
+      }
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.round(img.width * scale)
+      canvas.height = Math.round(img.height * scale)
+      const ctx = canvas.getContext('2d')
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+      pendingImages.value.push(canvas.toDataURL('image/jpeg', 0.82))
+    }
+    img.onerror = () => window.__ui?.showToast('图片读取失败，请换一张试试', 'error', 3000)
+    img.src = ev.target.result
+  }
+  reader.onerror = () => window.__ui?.showToast('图片读取失败，请换一张试试', 'error', 3000)
+  reader.readAsDataURL(file)
+}
+
 async function send() {
   if (!canSend.value) return
   if (!isApiConfigured(settings)) {
@@ -227,12 +318,14 @@ async function send() {
   }
 
   const text = input.value.trim()
+  const images = pendingImages.value.slice()
   const targetId = props.chat.id
   const targetType = props.type
   const targetChat = { ...props.chat }
   const senderName = settings.userName || '我'
 
   input.value = ''
+  pendingImages.value = []
   nextTick(autoResize)
 
   store.appendMessage({
@@ -240,6 +333,7 @@ async function send() {
     senderId: 'me',
     senderName,
     content: text,
+    ...(images.length ? { images } : {}),
     ts: Date.now(),
   }, targetId)
 
@@ -529,45 +623,109 @@ async function deleteGroup() {
   30% { transform: translateY(-4px); opacity: 1; }
 }
 
+/* 图片消息 */
+.bubble-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.bubble-img {
+  max-width: 200px;
+  max-height: 250px;
+  border-radius: 12px;
+  object-fit: cover;
+  border: 1px solid var(--border-color);
+  display: block;
+}
+
 /* 输入区 */
 .composer {
-  display: flex;
-  align-items: flex-end;
-  gap: 10px;
-  padding: 10px 16px 14px;
+  padding: 8px 16px 14px;
   border-top: 1px solid var(--border-color);
   flex-shrink: 0;
   background: var(--bg-primary);
 }
+.pending-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.pending-img {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  background: var(--bg-sidebar);
+}
+.pending-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.pending-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.composer-card {
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  padding: 8px 10px 6px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.composer-card:focus-within,
+.composer-card.listening {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-shadow);
+}
+.composer-top {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
 .composer-input {
   flex: 1;
-  min-height: 40px;
+  min-width: 0;
+  min-height: 32px;
   max-height: 120px;
-  padding: 9px 12px;
-  border: 1px solid var(--border-color);
-  border-radius: 10px;
-  background: var(--bg-input);
+  padding: 4px;
+  border: none;
+  background: transparent;
   color: var(--text-primary);
   font-size: 14px;
   line-height: 1.6;
   font-family: inherit;
   resize: none;
   outline: none;
-  transition: border-color 0.15s;
-}
-.composer-input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-shadow);
 }
 .composer-input::placeholder {
   color: var(--text-muted);
 }
 .send-btn {
-  width: 40px;
-  height: 40px;
+  width: 34px;
+  height: 34px;
   flex-shrink: 0;
   border: none;
-  border-radius: 10px;
+  border-radius: 50%;
   background: var(--accent);
   color: #fff;
   cursor: pointer;
@@ -583,6 +741,59 @@ async function deleteGroup() {
   background: var(--bg-hover);
   color: var(--text-muted);
   cursor: not-allowed;
+}
+.composer-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-color);
+}
+.tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 9px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.tool-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.tool-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.voice-btn.recording {
+  color: var(--accent);
+  background: var(--accent-light);
+}
+.voice-wave {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 1px;
+}
+.voice-wave i {
+  width: 2px;
+  height: 5px;
+  border-radius: 1px;
+  background: currentColor;
+  animation: voice-wave 0.9s ease-in-out infinite;
+}
+.voice-wave i:nth-child(2) { animation-delay: 0.15s; }
+.voice-wave i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes voice-wave {
+  0%, 100% { height: 4px; opacity: 0.4; }
+  50% { height: 10px; opacity: 1; }
 }
 
 @media (max-width: 768px) {
