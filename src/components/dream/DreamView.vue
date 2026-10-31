@@ -227,7 +227,24 @@ function exitDream() {
     radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.22), transparent 55%),
     linear-gradient(160deg, #10131c, #2b1b23 55%, #5d1f1a);
 }
-.cover-xingshi::after {
+.cover-xingshi .work-cover::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(115deg, transparent 0 12px, rgba(255, 255, 255, 0.04) 12px 13px);
+}
+.cover-fanchen .work-cover {
+  background:
+    radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.2), transparent 55%),
+    linear-gradient(160deg, #0b1512, #17453a 55%, #7d6a24);
+}
+.cover-qishi .work-cover {
+  background:
+    radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.2), transparent 55%),
+    linear-gradient(160deg, #0d1520, #24405a 55%, #4d7195);
+}
+.cover-fanchen .work-cover::after,
+.cover-qishi .work-cover::after {
   content: '';
   position: absolute;
   inset: 0;

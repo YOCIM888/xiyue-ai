@@ -13,6 +13,7 @@
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></svg>
         <span>重新开始</span>
       </button>
+      <ContextRing :used="contextUsed" :limit="contextLimit" />
     </header>
 
     <div ref="feedEl" class="stage-feed">
@@ -90,6 +91,8 @@ import { computed, nextTick, onMounted, ref } from 'vue'
 import { generateNextScene, isDreamApiReady } from '../../services/dream'
 import { useDreamStore } from '../../stores/dream'
 import { useSettingsStore } from '../../stores/settings'
+import ContextRing from '../common/ContextRing.vue'
+import { estimateTokens } from '../../utils/contextUsage'
 
 const props = defineProps({
   work: { type: Object, required: true },
@@ -108,6 +111,16 @@ const currentOptions = computed(() => {
   const turns = store.turns
   return turns.length ? turns[turns.length - 1].options : props.work.openingOptions
 })
+
+// 本作品窗口积累的上下文：作品设定 + 开场 + 已推演的每一幕
+const contextUsed = computed(() => {
+  const base = estimateTokens(`${props.work.setting}\n${props.work.opening}`) + 160
+  const story = store.turns
+    .map(t => `${t.narrative}\n你选择了：${t.fromChoice}\n${(t.options || []).join('\n')}`)
+    .join('\n\n')
+  return base + estimateTokens(story)
+})
+const contextLimit = computed(() => settings.contextLength || 131072)
 
 onMounted(async () => {
   await nextTick()
@@ -181,6 +194,8 @@ async function restart() {
   })
   if (!ok) return
   store.resetWork(props.work.id)
+  // 重置会清空 activeId，重新打开以保证后续选项能正常记录
+  store.openWork(props.work.id)
   pendingChoice.value = ''
   customText.value = ''
   toast('已重新开始', 'success')

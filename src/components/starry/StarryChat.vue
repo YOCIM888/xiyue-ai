@@ -17,6 +17,8 @@
         <div class="head-sub" :class="{ typing: typingVisible }">{{ subtitle }}</div>
       </div>
 
+      <ContextRing :used="contextUsed" :limit="contextLimit" />
+
       <button class="head-icon-btn" title="更多" @click="openMenu">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="19" cy="12" r="1.7" /></svg>
       </button>
@@ -140,7 +142,9 @@ import StarryAvatar from './StarryAvatar.vue'
 import { useStarryStore } from '../../stores/starry'
 import { useSettingsStore } from '../../stores/settings'
 import { useVoiceInput } from '../../composables/useVoiceInput'
-import { generateCharacterReply, isApiConfigured, selectRepliers } from '../../services/starry'
+import { generateCharacterReply, isApiConfigured, selectRepliers, buildSystemPrompt, buildHistory } from '../../services/starry'
+import ContextRing from '../common/ContextRing.vue'
+import { estimateMessagesTokens } from '../../utils/contextUsage'
 
 const props = defineProps({
   type: { type: String, required: true },
@@ -171,6 +175,25 @@ function toggleVoice() {
 
 const messages = computed(() => store.messages)
 const userName = computed(() => settings.userName || '我')
+
+// 当前窗口实际会发送的上下文（角色设定 + 最近聊天记录）
+const contextUsed = computed(() => {
+  if (props.type === 'group') {
+    const memberId = (props.chat.members || [])[0]
+    const member =
+      store.friends.find(f => f.id === memberId) ||
+      { id: memberId || 'member', name: props.chat.name, persona: '' }
+    return estimateMessagesTokens([
+      { role: 'system', content: buildSystemPrompt(member, props.chat) },
+      ...buildHistory(member.id, messages.value),
+    ])
+  }
+  return estimateMessagesTokens([
+    { role: 'system', content: buildSystemPrompt(props.chat) },
+    ...buildHistory(props.chat.id, messages.value),
+  ])
+})
+const contextLimit = computed(() => settings.contextLength || 131072)
 
 const typingVisible = computed(() =>
   store.sending && store.typingName && store.generatingChatId === props.chat.id

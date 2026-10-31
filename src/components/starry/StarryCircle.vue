@@ -6,6 +6,7 @@
         <span class="circle-sub">好友动态</span>
       </div>
       <div class="circle-actions">
+        <ContextRing :used="contextUsed" :limit="contextLimit" />
         <button class="action-btn" :disabled="store.refreshing" title="刷新动态" @click="refresh">
           <svg :class="{ spinning: store.refreshing }" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
           <span>{{ store.refreshing ? '刷新中' : '刷新' }}</span>
@@ -107,6 +108,8 @@ import { useStarryCircleStore } from '../../stores/starryCircle'
 import { useSettingsStore } from '../../stores/settings'
 import { isApiConfigured } from '../../services/starry'
 import { generateCirclePosts, generateAuthorReply } from '../../services/starryCircle'
+import ContextRing from '../common/ContextRing.vue'
+import { estimateTokens } from '../../utils/contextUsage'
 
 const store = useStarryCircleStore()
 const starry = useStarryStore()
@@ -116,6 +119,19 @@ const feedEl = ref(null)
 const commentDraft = ref({})
 
 const userName = computed(() => settings.userName || '我')
+
+// 圈子窗口积累的全部动态与评论（删帖 / 重置后会同步下降）
+const contextUsed = computed(() => {
+  const text = store.posts
+    .map(p => [
+      `【${p.authorName}｜${p.category}】`,
+      p.content,
+      ...(p.comments || []).map(c => `${c.authorName}：${c.content}`),
+    ].join('\n'))
+    .join('\n\n')
+  return estimateTokens(text)
+})
+const contextLimit = computed(() => settings.contextLength || 131072)
 
 onMounted(() => {
   store.init()

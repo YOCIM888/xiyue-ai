@@ -2,6 +2,7 @@
   <header class="topbar">
     <h1 class="title">XIYUE AI</h1>
     <div class="actions">
+      <ContextRing :used="contextUsed" :limit="contextLimit" align="right" />
       <button class="btn-icon" @click="scrollToTop" title="回到顶部">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"/></svg>
       </button>
@@ -16,13 +17,28 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
 import { useTopicsStore } from '../../stores/topics'
 import { useChatStore } from '../../stores/chat'
+import { useSettingsStore } from '../../stores/settings'
 import { useRouter } from 'vue-router'
+import ContextRing from '../common/ContextRing.vue'
+import { estimateMessagesTokens } from '../../utils/contextUsage'
 
 const topics = useTopicsStore()
 const chat = useChatStore()
+const settings = useSettingsStore()
 const router = useRouter()
+
+// 当前对话实际会发送的上下文（系统提示词 + 历史消息）
+const contextUsed = computed(() => {
+  const system = chat.buildSystemPrompt()
+  return estimateMessagesTokens([
+    ...(system ? [{ role: 'system', content: system }] : []),
+    ...chat.messages,
+  ])
+})
+const contextLimit = computed(() => settings.contextLength || 131072)
 
 function scrollToTop() {
   const el = document.querySelector('.message-list')
