@@ -3,6 +3,15 @@ import { ref, computed, watch } from 'vue'
 
 const KEY = 'xiyue_memories'
 const ENABLED_KEY = 'xiyue_memory_enabled'
+const ACCESS_KEY = 'xiyue_memory_access'
+
+// 跨模块读取权限。默认全部关闭：老用户升级后保持原有的模块隔离行为。
+export const DEFAULT_MEMORY_ACCESS = {
+  circleReadMain: false,
+  friendReadMain: false,
+  groupReadPrivate: false,
+  privateReadGroup: false,
+}
 
 function loadMemories() {
   try {
@@ -19,9 +28,26 @@ function loadEnabled() {
   return raw === null ? true : raw === '1'
 }
 
+function loadAccess() {
+  const merged = { ...DEFAULT_MEMORY_ACCESS }
+  try {
+    const raw = localStorage.getItem(ACCESS_KEY)
+    if (!raw) return merged
+    const data = JSON.parse(raw)
+    if (!data || typeof data !== 'object') return merged
+    for (const key of Object.keys(DEFAULT_MEMORY_ACCESS)) {
+      if (typeof data[key] === 'boolean') merged[key] = data[key]
+    }
+  } catch {
+    // 设置损坏时回退为全关，保持模块隔离
+  }
+  return merged
+}
+
 export const useMemoryStore = defineStore('memory', () => {
   const memories = ref(loadMemories())
   const enabled = ref(loadEnabled())
+  const access = ref(loadAccess())
 
   const sorted = computed(() => [...memories.value].sort((a, b) => b.updatedAt - a.updatedAt))
 
@@ -39,6 +65,12 @@ export const useMemoryStore = defineStore('memory', () => {
 
   function persistEnabled() {
     localStorage.setItem(ENABLED_KEY, enabled.value ? '1' : '0')
+  }
+
+  function persistAccess() {
+    try {
+      localStorage.setItem(ACCESS_KEY, JSON.stringify(access.value))
+    } catch { /* 存储超限时静默失败 */ }
   }
 
   function create(title, content, source = 'manual') {
@@ -73,6 +105,7 @@ export const useMemoryStore = defineStore('memory', () => {
 
   watch(memories, persist, { deep: true })
   watch(enabled, persistEnabled)
+  watch(access, persistAccess, { deep: true })
 
-  return { memories, sorted, enabled, disabled, create, update, remove, removeMany }
+  return { memories, sorted, enabled, disabled, access, create, update, remove, removeMany }
 })

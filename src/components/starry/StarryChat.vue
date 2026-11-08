@@ -141,6 +141,8 @@ import { computed, nextTick, ref, watch } from 'vue'
 import StarryAvatar from './StarryAvatar.vue'
 import { useStarryStore } from '../../stores/starry'
 import { useSettingsStore } from '../../stores/settings'
+import { useMemoryStore } from '../../stores/memory'
+import { buildCharacterMemoryContext } from '../../utils/memoryContext'
 import { useVoiceInput } from '../../composables/useVoiceInput'
 import { generateCharacterReply, isApiConfigured, selectRepliers, buildSystemPrompt, buildHistory } from '../../services/starry'
 import ContextRing from '../common/ContextRing.vue'
@@ -155,6 +157,11 @@ const emit = defineEmits(['back', 'open-friend', 'open-group', 'deleted'])
 
 const store = useStarryStore()
 const settings = useSettingsStore()
+const memory = useMemoryStore()
+
+function memoryContextFor(friend, group = null) {
+  return buildCharacterMemoryContext({ friend, group, memoryStore: memory, starryStore: store })
+}
 
 const messagesEl = ref(null)
 const inputEl = ref(null)
@@ -184,12 +191,13 @@ const contextUsed = computed(() => {
       store.friends.find(f => f.id === memberId) ||
       { id: memberId || 'member', name: props.chat.name, persona: '' }
     return estimateMessagesTokens([
-      { role: 'system', content: buildSystemPrompt(member, props.chat) },
+      { role: 'system', content: buildSystemPrompt(member, props.chat, memoryContextFor(member, props.chat)) },
       ...buildHistory(member.id, messages.value),
     ])
   }
+  const memoryContext = memoryContextFor(props.chat)
   return estimateMessagesTokens([
-    { role: 'system', content: buildSystemPrompt(props.chat) },
+    { role: 'system', content: buildSystemPrompt(props.chat, null, memoryContext) },
     ...buildHistory(props.chat.id, messages.value),
   ])
 })
@@ -371,6 +379,7 @@ async function send() {
         friend: targetChat,
         messages: store.getMessages(targetId),
         settings,
+        memoryContext: memoryContextFor(targetChat),
       })
       store.appendMessage({
         role: 'character',
@@ -402,6 +411,7 @@ async function send() {
           group: targetChat,
           messages: store.getMessages(targetId),
           settings,
+          memoryContext: memoryContextFor(friend, targetChat),
         })
         store.appendMessage({
           role: 'character',

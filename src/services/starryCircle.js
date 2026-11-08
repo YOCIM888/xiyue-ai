@@ -121,7 +121,7 @@ function normalizePost(raw, friends, index) {
 /**
  * 构建圈子动态生成提示词（含话题种子、已有话题规避与标签要求）
  */
-function buildSystemPrompt({ profiles, categoryHint, seeds, avoidSummaries, count }) {
+function buildSystemPrompt({ profiles, categoryHint, seeds, avoidSummaries, count, memoryContext = '' }) {
   const parts = [
     `你是「探索星空」社交圈子的内容引擎。请以好友们的第一人称视角，生成 ${count} 条自然、真实、有生活气息的动态。`,
     '',
@@ -129,6 +129,10 @@ function buildSystemPrompt({ profiles, categoryHint, seeds, avoidSummaries, coun
     profiles,
     '',
   ]
+
+  if (memoryContext) {
+    parts.push(memoryContext, '')
+  }
 
   if (seeds.length) {
     parts.push(
@@ -170,6 +174,7 @@ async function requestCirclePosts({
   seeds,
   avoidSummaries,
   categoryHint,
+  memoryContext = '',
 }) {
   const profiles = friends
     .map(f => `- ${f.name}：${String(f.persona || '').slice(0, 200)}`)
@@ -180,6 +185,7 @@ async function requestCirclePosts({
     seeds,
     avoidSummaries,
     count,
+    memoryContext,
   })
 
   let output = ''
@@ -217,6 +223,7 @@ export async function generateCirclePosts({
   count = 3,
   seeds = [],
   existingPosts = [],
+  memoryContext = '',
 }) {
   if (!friends.length) throw new Error('还没有好友，无法生成动态')
 
@@ -242,6 +249,7 @@ export async function generateCirclePosts({
         seeds,
         avoidSummaries,
         categoryHint,
+        memoryContext,
       })
     } catch (err) {
       if (accepted.length) break
@@ -271,11 +279,12 @@ export async function generateCirclePosts({
 /**
  * 用户留言后，由帖子作者回复
  */
-export async function generateAuthorReply({ post, friend, userComment, userName, settings }) {
+export async function generateAuthorReply({ post, friend, userComment, userName, settings, memoryContext = '' }) {
+  const memoryPart = memoryContext ? `\n\n${memoryContext}` : ''
   const systemPrompt = `你是${friend.name}。${String(friend.persona || '').slice(0, 300)}
 
 你刚刚在「探索星空」圈子里发布了动态：
-${post.content}
+${post.content}${memoryPart}
 
 现在好友「${userName}」在这条动态下给你留言了。请以你的身份回复这条留言。
 要求：口语化、简短（不超过 80 字）、符合你的性格；只输出回复内容，不要加姓名前缀、引号或解释。`

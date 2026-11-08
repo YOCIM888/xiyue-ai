@@ -18,7 +18,7 @@ const SETTINGS_KEY = 'ai_chat_settings'
 function moduleOf(key) {
   if (key === SETTINGS_KEY || key === 'system_prompt_content') return 'settings'
   if (key === 'ai_chat_topics' || key.startsWith('chat_messages_') || key.startsWith('chat_conv_v2_')) return 'chat'
-  if (key === 'xiyue_memories' || key === 'xiyue_memory_enabled') return 'memory'
+  if (key === 'xiyue_memories' || key === 'xiyue_memory_enabled' || key === 'xiyue_memory_access') return 'memory'
   if (key === 'xiyue_starry_circle_posts') return 'circle'
   if (key === 'xiyue_dream_sessions') return 'dream'
   if (key === 'xiyue_assets') return 'assets'
@@ -34,6 +34,7 @@ function labelOf(key) {
   if (key.startsWith('chat_conv_v2_')) return `会话（含分支） #${key.slice('chat_conv_v2_'.length)}`
   if (key === 'xiyue_memories') return '记忆列表'
   if (key === 'xiyue_memory_enabled') return '记忆开关'
+  if (key === 'xiyue_memory_access') return '记忆读取权限'
   if (key === 'xiyue_starry_friends') return '好友列表'
   if (key === 'xiyue_starry_groups') return '群聊列表'
   if (key === 'xiyue_starry_active') return '上次打开窗口'
@@ -167,6 +168,7 @@ export function summarizeBackup(entries) {
     }, 0)
   const posts = parseRaw(entries.xiyue_starry_circle_posts || '[]', [])
   const memories = parseRaw(entries.xiyue_memories || '[]', [])
+  const memoryAccess = parseRaw(entries.xiyue_memory_access || 'null', null)
   const dream = parseRaw(entries.xiyue_dream_sessions || '{}', {})
   const assets = parseRaw(entries.xiyue_assets || '[]', [])
 
@@ -178,6 +180,11 @@ export function summarizeBackup(entries) {
   if (starryMsgs) parts.push(`星空 ${starryMsgs} 条消息`)
   if (Array.isArray(posts) && posts.length) parts.push(`圈子 ${posts.length} 条动态`)
   if (Array.isArray(memories) && memories.length) parts.push(`记忆 ${memories.length} 条`)
+  if (memoryAccess && typeof memoryAccess === 'object') {
+    const enabledCount = ['circleReadMain', 'friendReadMain', 'groupReadPrivate', 'privateReadGroup']
+      .filter(k => memoryAccess[k] === true).length
+    if (enabledCount) parts.push(`记忆读取权限 ${enabledCount} 项开启`)
+  }
   if (dream && typeof dream === 'object' && Object.keys(dream).length) {
     parts.push(`梦境 ${Object.keys(dream).length} 部作品进度`)
   }

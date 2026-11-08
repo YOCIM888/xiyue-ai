@@ -16,6 +16,7 @@ import {
   newBranchId,
   cloneMessagesForFork,
 } from '../utils/conversation'
+import { buildMainChatMemoryContext } from '../utils/memoryContext'
 // 系统提示词文件（Vite 构建时内联，零延迟）
 import systemPromptRaw from '../../public/prompt/system.md?raw'
 
@@ -418,14 +419,10 @@ export const useChatStore = defineStore('chat', () => {
       parts.push(`\n\n【用户信息】\n当前与你对话的用户名叫"${userName.trim()}"，请在交流中使用此名称称呼用户，并以此判断用户身份。`)
     }
 
-    // 长期记忆：用户未禁用时在所有对话中生效
+    // 长期记忆：主记忆未禁用时生效，读取有上限
     const memory = useMemoryStore()
-    if (memory.enabled && memory.memories.length) {
-      const lines = memory.memories
-        .map(m => `- ${m.title}：${m.content}`)
-        .join('\n')
-      parts.push(`\n\n【长期记忆】\n以下是用户要求你在所有对话中长期记住的信息，请结合这些内容回答，不要遗漏：\n${lines}`)
-    }
+    const memorySection = buildMainChatMemoryContext(memory)
+    if (memorySection) parts.push('\n\n' + memorySection)
     return parts.join('')
   }
 

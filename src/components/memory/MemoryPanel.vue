@@ -47,6 +47,68 @@
             </label>
           </div>
 
+          <div class="memory-access-card">
+            <div class="mac-head">记忆读取权限</div>
+
+            <div class="access-row">
+              <div class="msc-info">
+                <div class="msc-title">主记忆</div>
+                <div class="msc-desc">总开关，关闭后任何模块都不会读取长期记忆</div>
+              </div>
+              <label class="switch" :title="store.enabled ? '关闭主记忆' : '开启主记忆'">
+                <input v-model="store.enabled" type="checkbox" />
+                <span class="switch-track"><span class="switch-thumb"></span></span>
+              </label>
+            </div>
+
+            <div class="access-row" :class="{ disabled: !store.enabled }">
+              <div class="msc-info">
+                <div class="msc-title">圈子读取主记忆</div>
+                <div class="msc-desc">允许圈子动态参考你的长期记忆</div>
+              </div>
+              <label class="switch" :title="!store.enabled ? '请先开启主记忆' : '切换圈子读取主记忆'">
+                <input v-model="store.access.circleReadMain" type="checkbox" :disabled="!store.enabled" />
+                <span class="switch-track"><span class="switch-thumb"></span></span>
+              </label>
+            </div>
+
+            <div class="access-row" :class="{ disabled: !store.enabled }">
+              <div class="msc-info">
+                <div class="msc-title">好友读取主记忆</div>
+                <div class="msc-desc">允许星空好友在私聊和群聊中参考你的长期记忆</div>
+              </div>
+              <label class="switch" :title="!store.enabled ? '请先开启主记忆' : '切换好友读取主记忆'">
+                <input v-model="store.access.friendReadMain" type="checkbox" :disabled="!store.enabled" />
+                <span class="switch-track"><span class="switch-thumb"></span></span>
+              </label>
+            </div>
+
+            <div class="access-row">
+              <div class="msc-info">
+                <div class="msc-title">群聊好友读取私聊记忆</div>
+                <div class="msc-desc">允许好友在群聊中记得你们私聊里聊过的事</div>
+              </div>
+              <label class="switch" title="切换群聊读取私聊记忆">
+                <input v-model="store.access.groupReadPrivate" type="checkbox" />
+                <span class="switch-track"><span class="switch-thumb"></span></span>
+              </label>
+            </div>
+
+            <div class="access-row">
+              <div class="msc-info">
+                <div class="msc-title">私聊好友读取群聊记忆</div>
+                <div class="msc-desc">允许好友在私聊中提起你们在群聊里经历的事</div>
+              </div>
+              <label class="switch" title="切换私聊读取群聊记忆">
+                <input v-model="store.access.privateReadGroup" type="checkbox" />
+                <span class="switch-track"><span class="switch-thumb"></span></span>
+              </label>
+            </div>
+          </div>
+          <p class="access-hint">
+            主记忆与上方「禁用记忆」是同一个总开关。关闭后，两个「读取主记忆」子开关不可用；私聊与群聊互读不受影响。所有读取都会自动限制条数和长度。
+          </p>
+
           <div v-if="selectMode" class="select-bar">
             <span>已选 {{ selected.length }} 项</span>
             <button class="link-btn" @click="toggleSelectAll">{{ allSelected ? '取消全选' : '全选' }}</button>
@@ -82,7 +144,7 @@
           </div>
 
           <p class="memory-hint">
-            在对话中发送「记住……」或「保存记忆」，AI 会自动提炼关键点保存到这里。记忆在所有对话中生效；开启「禁用记忆」后新对话将不再读取。
+            在对话中发送「记住……」或「保存记忆」，AI 会自动提炼关键点保存到这里。主记忆开启后，才会按上面的读取权限提供给对应模块。
           </p>
         </div>
       </div>
@@ -212,6 +274,14 @@ async function deleteSelected() {
 .msc-info { flex: 1; min-width: 0; }
 .msc-title { font-size: 14px; font-weight: 600; color: var(--text-primary); }
 .msc-desc { margin-top: 3px; font-size: 12px; line-height: 1.5; color: var(--text-muted); }
+
+.memory-access-card { border: 1px solid var(--border-color); border-radius: 12px; background: var(--bg-card); margin-bottom: 12px; overflow: hidden; }
+.mac-head { padding: 12px 16px 4px; font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.access-row { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-top: 1px solid var(--border-color); }
+.access-row.disabled { opacity: 0.5; }
+.access-row.disabled .switch,
+.access-row.disabled input { cursor: not-allowed; }
+.access-hint { margin: 0 4px 14px; font-size: 12px; line-height: 1.6; color: var(--text-muted); }
 
 .switch { flex-shrink: 0; cursor: pointer; display: inline-flex; }
 .switch input { position: absolute; opacity: 0; width: 0; height: 0; }

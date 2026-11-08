@@ -110,6 +110,8 @@ import StarryAvatar from './StarryAvatar.vue'
 import { useStarryStore } from '../../stores/starry'
 import { useStarryCircleStore } from '../../stores/starryCircle'
 import { useSettingsStore } from '../../stores/settings'
+import { useMemoryStore } from '../../stores/memory'
+import { buildCircleMemoryContext } from '../../utils/memoryContext'
 import { isApiConfigured } from '../../services/starry'
 import { generateCirclePosts, generateAuthorReply } from '../../services/starryCircle'
 import ContextRing from '../common/ContextRing.vue'
@@ -119,6 +121,7 @@ import { collectRecentChatSeeds } from '../../utils/circleSeeds'
 const store = useStarryCircleStore()
 const starry = useStarryStore()
 const settings = useSettingsStore()
+const memory = useMemoryStore()
 
 const feedEl = ref(null)
 const commentDraft = ref({})
@@ -182,6 +185,7 @@ async function refresh() {
       count,
       seeds,
       existingPosts: store.posts,
+      memoryContext: buildCircleMemoryContext(memory),
     })
     store.addPosts(posts)
     if (feedEl.value) feedEl.value.scrollTop = 0
@@ -240,6 +244,7 @@ async function submitComment(post) {
       userComment: text,
       userName: userName.value,
       settings,
+      memoryContext: buildCircleMemoryContext(memory),
     })
     if (reply) {
       store.addComment(post.id, {
