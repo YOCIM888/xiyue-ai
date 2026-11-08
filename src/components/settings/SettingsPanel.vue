@@ -12,11 +12,11 @@
         <div class="settings-body">
           <!-- 设置菜单 -->
           <div v-if="!activeSection" class="settings-menu">
-            <button
+              <button
               v-for="sec in sections"
               :key="sec.key"
               class="menu-item"
-              @click="activeSection = sec.key"
+              @click="openSection(sec.key)"
             >
               <span class="menu-icon">
                 <svg v-if="sec.key === 'user'" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
@@ -24,7 +24,7 @@
                 <svg v-else-if="sec.key === 'params'" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
                 <svg v-else-if="sec.key === 'appearance'" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><circle cx="6.5" cy="12.5" r="1.5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>
                 <svg v-else-if="sec.key === 'prompt'" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                <svg v-else width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+                <i v-else class="fa-solid fa-database"></i>
               </span>
               <span class="menu-text">
                 <span class="menu-title">{{ sec.title }}</span>
@@ -270,14 +270,72 @@
             ></textarea>
           </div>
 
-          <!-- 数据管理 -->
+          <!-- 数据设置 -->
           <div v-else-if="activeSection === 'data'" class="section-page">
-            <div class="data-actions">
-              <button class="btn-secondary" @click="exportAssets">📥 导出资产</button>
-              <button class="btn-secondary" @click="triggerImportAssets">📤 导入资产</button>
-              <input ref="importInput" type="file" accept=".json" style="display:none" @change="importAssets" />
+            <div class="usage-card">
+              <div class="usage-top">
+                <div>
+                  <div class="usage-total">{{ formatBytes(usage.totalBytes) }}</div>
+                  <div class="usage-sub">本地存储占用 · 共 {{ usage.keyCount }} 项数据</div>
+                </div>
+                <button class="btn-refresh" title="刷新统计" @click="refreshUsage">
+                  <i class="fa-solid fa-rotate-right"></i>
+                </button>
+              </div>
+              <div class="usage-bar">
+                <span
+                  v-for="m in usage.modules"
+                  :key="m.key"
+                  class="usage-seg"
+                  :style="{ width: m.percent + '%', background: m.color }"
+                  :title="`${m.label} ${formatBytes(m.bytes)}`"
+                ></span>
+              </div>
             </div>
-            <p class="hint">导出的文件包含全部资产数据，可用于备份或迁移到其他设备。</p>
+
+            <div class="module-list">
+              <div v-for="m in usage.modules" :key="m.key" class="module-item">
+                <button class="module-head" @click="toggleModule(m.key)">
+                  <span class="module-icon" :style="{ color: m.color }"><i :class="m.icon"></i></span>
+                  <span class="module-name">{{ m.label }}</span>
+                  <span class="module-size">{{ formatBytes(m.bytes) }}</span>
+                  <span class="module-pct">{{ m.bytes > 0 && m.percent < 1 ? '<1' : Math.round(m.percent) }}%</span>
+                  <i class="fa-solid fa-chevron-down module-chevron" :class="{ open: expandedModule === m.key }"></i>
+                </button>
+                <div class="module-bar">
+                  <span :style="{ width: m.percent + '%', background: m.color }"></span>
+                </div>
+                <div v-if="expandedModule === m.key" class="key-list">
+                  <div v-for="e in m.entries" :key="e.key" class="key-row">
+                    <span class="key-name">{{ e.label }}</span>
+                    <span class="key-size">{{ formatBytes(e.bytes) }}</span>
+                  </div>
+                </div>
+              </div>
+              <div v-if="!usage.modules.length" class="usage-empty">暂无本地数据</div>
+            </div>
+
+            <div class="divider"></div>
+
+            <h3 class="sub-title"><i class="fa-solid fa-file-export"></i> 备份与恢复</h3>
+            <div class="data-actions">
+              <button class="btn-secondary" @click="exportAllData">
+                <i class="fa-solid fa-download"></i> 导出数据
+              </button>
+              <button class="btn-secondary" @click="triggerImportData">
+                <i class="fa-solid fa-upload"></i> 导入数据
+              </button>
+              <input ref="importDataInput" type="file" accept=".json,application/json" style="display:none" @change="importAllData" />
+            </div>
+            <p class="hint">导出文件包含版本号、导出时间与全部应用数据，文件名带日期，可用于备份或迁移到其他设备。</p>
+            <p class="hint protect-hint">
+              <i class="fa-solid fa-shield-halved"></i>
+              API Key 等敏感配置不会写入导出文件；导入时也会保留本机当前的 API Key。
+            </p>
+
+            <div class="divider"></div>
+
+            <h3 class="sub-title"><i class="fa-solid fa-triangle-exclamation"></i> 危险操作</h3>
             <button class="btn-danger" @click="clearAllData">清除所有数据</button>
           </div>
         </div>
@@ -293,13 +351,20 @@
 <script setup>
 import { ref, computed, reactive } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
-import { useAssetsStore } from '../../stores/assets'
+import {
+  computeStorageUsage,
+  formatBytes,
+  buildBackupPayload,
+  backupFileName,
+  parseBackup,
+  applyBackup,
+} from '../../utils/dataBackup'
 
 const settings = useSettingsStore()
 const visible = ref(false)
 const showKey = ref(false)
 const fileInput = ref(null)
-const importInput = ref(null)
+const importDataInput = ref(null)
 const voices = ref([])
 
 // 设置栏目
@@ -309,10 +374,27 @@ const sections = [
   { key: 'params', title: '参数设置', desc: 'Temperature、Top P 与上下文/输出长度' },
   { key: 'appearance', title: '外观设置', desc: '自定义背景、符号文字样式与头像显示' },
   { key: 'prompt', title: '提示设置', desc: '人设提示词与启用状态' },
-  { key: 'data', title: '数据管理', desc: '导入导出资产与清除数据' },
+  { key: 'data', title: '数据设置', desc: '存储占用、备份导出与导入恢复' },
 ]
 const activeSection = ref('')
 const currentSection = computed(() => sections.find(s => s.key === activeSection.value) || { title: '设置' })
+
+// 数据设置：本地存储统计
+const usage = ref({ totalBytes: 0, keyCount: 0, modules: [] })
+const expandedModule = ref('')
+
+function refreshUsage() {
+  usage.value = computeStorageUsage()
+}
+
+function toggleModule(key) {
+  expandedModule.value = expandedModule.value === key ? '' : key
+}
+
+function openSection(key) {
+  activeSection.value = key
+  if (key === 'data') refreshUsage()
+}
 
 // Token 档位
 const contextOptions = [
@@ -502,7 +584,7 @@ function selectOllamaModel(name) {
 }
 
 function open(section = '') {
-  activeSection.value = section
+  openSection(section)
   visible.value = true
 }
 
@@ -572,35 +654,46 @@ async function clearAllData() {
   }
 }
 
-function exportAssets() {
-  const assetsStore = useAssetsStore()
-  const json = assetsStore.exportData()
-  const blob = new Blob([json], { type: 'application/json' })
+function exportAllData() {
+  const payload = buildBackupPayload()
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = 'xiyue-assets-' + new Date().toISOString().slice(0, 10) + '.json'
+  a.download = backupFileName()
   a.click()
   URL.revokeObjectURL(url)
-  window.__ui?.showToast('资产已导出', 'success')
+  window.__ui?.showToast('数据已导出', 'success')
 }
 
-function triggerImportAssets() { importInput.value?.click() }
+function triggerImportData() { importDataInput.value?.click() }
 
-async function importAssets(e) {
+async function importAllData(e) {
   const file = e.target.files?.[0]
-  if (!file) return
-  try {
-    const text = await file.text()
-    const assetsStore = useAssetsStore()
-    const before = assetsStore.assets.length
-    assetsStore.importData(text)
-    const added = assetsStore.assets.length - before
-    window.__ui?.showToast(`导入完成，新增 ${added} 条`, 'success')
-  } catch {
-    window.__ui?.showToast('导入失败：文件格式错误', 'error')
-  }
   e.target.value = ''
+  if (!file) return
+
+  let parsed
+  try {
+    parsed = parseBackup(await file.text())
+  } catch (err) {
+    window.__ui?.showToast(`导入失败：${err?.message || '文件格式错误'}`, 'error')
+    return
+  }
+
+  const summary = parsed.summary.length ? parsed.summary.join('、') : '空备份（将清空本地数据）'
+  const ok = await window.__ui?.showConfirm(
+    `导入将覆盖本地数据：${summary}。本机 API Key 会保留，导入完成后页面将自动刷新。是否继续？`
+  )
+  if (!ok) return
+
+  try {
+    const count = applyBackup(parsed.entries)
+    window.__ui?.showToast(`已恢复 ${count} 项数据，正在刷新…`, 'success')
+    setTimeout(() => location.reload(), 600)
+  } catch {
+    window.__ui?.showToast('导入失败：写入数据时出错', 'error')
+  }
 }
 </script>
 
@@ -975,6 +1068,171 @@ input[type="range"] {
 
 .data-actions { display: flex; gap: 8px; margin-bottom: 8px; }
 .data-actions .btn-secondary { flex: 1; }
+.data-actions .btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.data-actions .btn-secondary i { font-size: 12px; }
+.sub-title i { font-size: 13px; color: var(--text-secondary); }
+.menu-icon i { font-size: 18px; }
+
+/* 数据设置：存储占用 */
+.usage-card {
+  padding: 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-card);
+}
+.usage-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.usage-total {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--text-primary);
+  letter-spacing: -0.5px;
+}
+.usage-sub {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.btn-refresh {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+}
+.btn-refresh:hover { background: var(--bg-hover); color: var(--text-primary); }
+.usage-bar {
+  display: flex;
+  height: 8px;
+  margin-top: 14px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--bg-input);
+}
+.usage-seg { height: 100%; min-width: 2px; }
+
+.module-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+}
+.module-item {
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-card);
+  overflow: hidden;
+}
+.module-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px 6px;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.module-icon {
+  width: 18px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 13px;
+}
+.module-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.module-size { flex-shrink: 0; font-size: 12px; color: var(--text-secondary); }
+.module-pct {
+  width: 36px;
+  flex-shrink: 0;
+  text-align: right;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.module-chevron {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--text-muted);
+  transition: transform 0.18s;
+}
+.module-chevron.open { transform: rotate(180deg); }
+.module-bar {
+  height: 4px;
+  margin: 0 12px 10px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--bg-input);
+}
+.module-bar span { display: block; height: 100%; border-radius: 2px; min-width: 2px; }
+.key-list {
+  padding: 6px 12px 10px;
+  border-top: 1px dashed var(--border-color);
+}
+.key-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 0;
+}
+.key-name {
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.key-size {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.usage-empty {
+  padding: 16px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.protect-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg-input);
+}
+.protect-hint i { margin-top: 2px; color: var(--accent); }
 
 .voice-select {
   width: 100%; padding: 9px 12px; border: 1px solid var(--border-color); border-radius: 8px;
