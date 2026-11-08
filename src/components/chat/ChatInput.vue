@@ -32,7 +32,7 @@
     </div>
 
     <!-- 输入卡片 -->
-    <div class="input-card" :class="{ listening }">
+    <div class="input-card">
       <div class="input-top">
         <textarea ref="textareaRef" v-model="input" class="chat-input"
           :placeholder="placeholder"
@@ -55,19 +55,16 @@
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 1 1 7.072 0l-.548.547A3.374 3.374 0 0 0 14 18.469V19a2 2 0 1 1-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
             <span>思考</span>
           </button>
+          <button class="tool-btn" :class="{ active: settings.forceSearch }"
+            @click="toggleForceSearch" title="联网搜索：开启后每条消息先搜索资料再回答">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <span>搜索</span>
+          </button>
           <button class="tool-btn" @click="triggerImageUpload" title="上传图片">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
             <span>图片</span>
           </button>
           <input ref="imgInputRef" type="file" accept="image/*" style="display:none" @change="handleImageUpload" />
-          <button class="tool-btn voice-btn" :class="{ recording: listening }" @click="toggleVoice"
-            :disabled="isLoading" :title="listening ? '停止语音输入' : '语音输入'">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-            <span>{{ listening ? '聆听中' : '语音' }}</span>
-            <span v-if="listening" class="voice-wave">
-              <i></i><i></i><i></i>
-            </span>
-          </button>
           <button class="tool-btn" @click="triggerFileUpload" title="上传文件">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
             <span>文件</span>
@@ -90,7 +87,6 @@ import { ref, computed, watch, nextTick } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
 import { useAssetsStore } from '../../stores/assets'
 import { useChatStore } from '../../stores/chat'
-import { useVoiceInput } from '../../composables/useVoiceInput'
 import { compressImageDataUrl, OCR_IMAGE_OPTIONS } from '../../utils/image'
 import { estimateMessagesTokens } from '../../utils/contextUsage'
 import ContextRing from '../common/ContextRing.vue'
@@ -128,7 +124,7 @@ const isMobile = /Android|iPhone|iPad|iPod|webOS/i.test(navigator.userAgent) || 
 const isLoading = computed(() => props.isLoading)
 const placeholder = computed(() => {
   if (isLoading.value) return 'AI 正在回复中…'
-  return listening.value ? '正在聆听，说完会自动发送…' : '输入消息…'
+  return '输入消息…'
 })
 
 function autoResize() {
@@ -198,16 +194,12 @@ watch(() => settings.documentSkillEnabled, (enabled) => {
   }
 })
 
-// ---- 语音输入 ----
-const { listening, toggle: toggleVoiceInput } = useVoiceInput({
-  getBaseText: () => input.value,
-  onUpdate: (text) => { input.value = text; autoResize() },
-  onFinish: () => send(),
-})
-
-function toggleVoice() {
-  if (isLoading.value) return
-  toggleVoiceInput()
+// ---- 强制联网搜索 ----
+function toggleForceSearch() {
+  if (!settings.forceSearch && !String(settings.tavilyApiKey || '').trim()) {
+    window.__ui?.showToast('未配置 Tavily API Key，搜索会失败。请到 设置 → 搜索服务 填写。', 'error', 4200)
+  }
+  settings.forceSearch = !settings.forceSearch
 }
 
 // ---- 图片上传 ----
@@ -345,10 +337,6 @@ defineExpose({ focus: () => textareaRef.value?.focus() })
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-shadow);
 }
-.input-card.listening {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-shadow);
-}
 
 /* 上部：文字 + 发送 */
 .input-top { display: flex; align-items: flex-end; gap: 8px; }
@@ -392,22 +380,6 @@ defineExpose({ focus: () => textareaRef.value?.focus() })
 .tool-btn:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-primary); }
 .tool-btn.active { color: var(--accent); background: var(--accent-light); }
 .tool-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-
-.voice-btn.recording {
-  color: var(--accent);
-  background: var(--accent-light);
-}
-.voice-wave { display: inline-flex; align-items: center; gap: 2px; margin-left: 1px; }
-.voice-wave i {
-  width: 2px; height: 5px; border-radius: 1px; background: currentColor;
-  animation: voiceWave 0.9s ease-in-out infinite;
-}
-.voice-wave i:nth-child(2) { animation-delay: 0.15s; }
-.voice-wave i:nth-child(3) { animation-delay: 0.3s; }
-@keyframes voiceWave {
-  0%, 100% { height: 4px; opacity: 0.4; }
-  50% { height: 10px; opacity: 1; }
-}
 
 @media (max-width: 768px) {
   .chat-input-container { padding: 8px 10px 12px; }

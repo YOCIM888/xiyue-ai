@@ -30,6 +30,7 @@ export const useSettingsStore = defineStore('settings', () => {
     ocrSkillEnabled: false,
     modelVisionMode: 'auto',
     searchSkillEnabled: false,
+    forceSearch: false,
     tavilyApiKey: '',
     searchDepth: 'basic',
     searchMaxResults: 5,
@@ -65,6 +66,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const ocrSkillEnabled = ref(saved.ocrSkillEnabled ?? defaults.ocrSkillEnabled)
   const modelVisionMode = ref(saved.modelVisionMode ?? defaults.modelVisionMode)
   const searchSkillEnabled = ref(saved.searchSkillEnabled ?? defaults.searchSkillEnabled)
+  const forceSearch = ref(saved.forceSearch ?? defaults.forceSearch)
   const tavilyApiKey = ref(saved.tavilyApiKey ?? defaults.tavilyApiKey)
   const searchDepth = ref(saved.searchDepth ?? defaults.searchDepth)
   const searchMaxResults = ref(saved.searchMaxResults ?? defaults.searchMaxResults)
@@ -150,6 +152,7 @@ export const useSettingsStore = defineStore('settings', () => {
       ocrSkillEnabled: ocrSkillEnabled.value,
       modelVisionMode: modelVisionMode.value,
       searchSkillEnabled: searchSkillEnabled.value,
+      forceSearch: forceSearch.value,
       tavilyApiKey: tavilyApiKey.value,
       searchDepth: searchDepth.value,
       searchMaxResults: searchMaxResults.value,
@@ -169,7 +172,7 @@ export const useSettingsStore = defineStore('settings', () => {
 
   // 自动持久化：任何设置变更立刻保存
   watch(
-    [apiKey, apiBase, model, temperature, maxTokens, contextLength, topP, personaPrompt, userName, thinkingEnabled, userAvatar, personaEnabled, darkMode, linkSkillEnabled, documentSkillEnabled, ocrSkillEnabled, modelVisionMode, searchSkillEnabled, tavilyApiKey, searchDepth, searchMaxResults, imageGenSkillEnabled, secondaryApiBase, secondaryApiKey, secondaryModel, secondaryImageModel, backgroundImage, hideUserAvatar, hideAiAvatar],
+    [apiKey, apiBase, model, temperature, maxTokens, contextLength, topP, personaPrompt, userName, thinkingEnabled, userAvatar, personaEnabled, darkMode, linkSkillEnabled, documentSkillEnabled, ocrSkillEnabled, modelVisionMode, searchSkillEnabled, forceSearch, tavilyApiKey, searchDepth, searchMaxResults, imageGenSkillEnabled, secondaryApiBase, secondaryApiKey, secondaryModel, secondaryImageModel, backgroundImage, hideUserAvatar, hideAiAvatar],
     () => persist(),
     { deep: false }
   )
@@ -184,7 +187,7 @@ export const useSettingsStore = defineStore('settings', () => {
     apiKey, apiBase, model, temperature, maxTokens, contextLength, topP, personaPrompt, userName, thinkingEnabled, userAvatar, personaEnabled, darkMode, linkSkillEnabled,
     backgroundImage, symbolRules, hideUserAvatar, hideAiAvatar, documentSkillEnabled,
     ocrSkillEnabled, modelVisionMode,
-    searchSkillEnabled, tavilyApiKey, searchDepth, searchMaxResults, imageGenSkillEnabled,
+    searchSkillEnabled, forceSearch, tavilyApiKey, searchDepth, searchMaxResults, imageGenSkillEnabled,
     secondaryApiBase, secondaryApiKey, secondaryModel, secondaryImageModel, secondaryReady, secondaryPresets, applySecondaryPreset,
     modelPresets, applyPreset, persist, settingsReady, defaults,
   }

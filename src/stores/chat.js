@@ -365,7 +365,7 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     let intent = 'none'
-    if (confirmedSearch) intent = 'search'
+    if (confirmedSearch || settings.forceSearch) intent = 'search'
     else if (settings.searchSkillEnabled) intent = detectSearchIntent(userContent)
 
     let searchNotice = ''

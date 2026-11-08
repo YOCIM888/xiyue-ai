@@ -5,7 +5,7 @@
 
 const ENDPOINT = 'https://api.tavily.com/search'
 const TIMEOUT_MS = 8000
-const MAX_CHARS = 6000
+const MAX_CHARS = 10000
 const MAX_RESULT_LIMIT = 10
 const MAX_ITEM_CHARS = 1200
 

@@ -88,7 +88,7 @@
         </div>
       </div>
 
-      <div class="composer-card" :class="{ listening }">
+      <div class="composer-card">
         <div class="composer-top">
           <textarea
             ref="inputEl"
@@ -117,17 +117,6 @@
             <span>图片</span>
           </button>
           <input ref="imageInput" type="file" accept="image/*" style="display: none" @change="onImagePicked" />
-          <button
-            class="tool-btn voice-btn"
-            :class="{ recording: listening }"
-            :disabled="store.sending"
-            :title="listening ? '停止语音输入' : '语音输入'"
-            @click="toggleVoice"
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-            <span>{{ listening ? '聆听中' : '语音' }}</span>
-            <span v-if="listening" class="voice-wave"><i></i><i></i><i></i></span>
-          </button>
           <ContextRing class="composer-ctx" :used="contextUsed" :limit="contextLimit" align="right" pop-direction="up" :size="22" />
         </div>
       </div>
@@ -142,7 +131,6 @@ import { useStarryStore } from '../../stores/starry'
 import { useSettingsStore } from '../../stores/settings'
 import { useMemoryStore } from '../../stores/memory'
 import { buildCharacterMemoryContext } from '../../utils/memoryContext'
-import { useVoiceInput } from '../../composables/useVoiceInput'
 import { generateCharacterReply, isApiConfigured, selectRepliers, buildSystemPrompt, buildHistory } from '../../services/starry'
 import ContextRing from '../common/ContextRing.vue'
 import { estimateMessagesTokens } from '../../utils/contextUsage'
@@ -167,17 +155,6 @@ const inputEl = ref(null)
 const imageInput = ref(null)
 const input = ref('')
 const pendingImages = ref([])
-
-const { listening, toggle: toggleVoiceInput } = useVoiceInput({
-  getBaseText: () => input.value,
-  onUpdate: (text) => { input.value = text; autoResize() },
-  onFinish: () => send(),
-})
-
-function toggleVoice() {
-  if (store.sending) return
-  toggleVoiceInput()
-}
 
 const messages = computed(() => store.messages)
 const userName = computed(() => settings.userName || '我')
@@ -214,7 +191,7 @@ const subtitle = computed(() => {
 
 const placeholder = computed(() => {
   if (typingVisible.value) return '对方正在输入…'
-  return listening.value ? '正在聆听，说完会自动发送…' : '发消息…'
+  return '发消息…'
 })
 
 const canSend = computed(() =>
@@ -724,8 +701,7 @@ async function deleteGroup() {
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
   transition: border-color 0.15s, box-shadow 0.15s;
 }
-.composer-card:focus-within,
-.composer-card.listening {
+.composer-card:focus-within {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-shadow);
 }
@@ -807,29 +783,6 @@ async function deleteGroup() {
 .tool-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-.voice-btn.recording {
-  color: var(--accent);
-  background: var(--accent-light);
-}
-.voice-wave {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  margin-left: 1px;
-}
-.voice-wave i {
-  width: 2px;
-  height: 5px;
-  border-radius: 1px;
-  background: currentColor;
-  animation: voice-wave 0.9s ease-in-out infinite;
-}
-.voice-wave i:nth-child(2) { animation-delay: 0.15s; }
-.voice-wave i:nth-child(3) { animation-delay: 0.3s; }
-@keyframes voice-wave {
-  0%, 100% { height: 4px; opacity: 0.4; }
-  50% { height: 10px; opacity: 1; }
 }
 
 @media (max-width: 768px) {
