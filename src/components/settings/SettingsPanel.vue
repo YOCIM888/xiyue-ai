@@ -21,6 +21,7 @@
               <span class="menu-icon">
                 <svg v-if="sec.key === 'user'" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
                 <svg v-else-if="sec.key === 'model'" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2"/></svg>
+                <svg v-else-if="sec.key === 'search'" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
                 <svg v-else-if="sec.key === 'params'" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
                 <svg v-else-if="sec.key === 'appearance'" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><circle cx="6.5" cy="12.5" r="1.5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>
                 <svg v-else-if="sec.key === 'prompt'" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
@@ -39,7 +40,6 @@
             <div class="field">
               <label>用户名 / 昵称</label>
               <input v-model="settings.userName" type="text" placeholder="输入你的名字，AI 会用它称呼你…" />
-              <span class="range-hint">AI 将在对话中读取此名称来识别你的身份并进行称呼</span>
             </div>
             <!-- 头像上传 -->
             <div class="field">
@@ -125,6 +125,49 @@
                 <button class="btn-toggle-pw" @click="showKey = !showKey">
                   <svg v-if="!showKey" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
                   <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="field">
+              <label>模型图片能力</label>
+              <div class="tier-grid">
+                <button class="tier-btn" :class="{ active: settings.modelVisionMode === 'auto' }" @click="settings.modelVisionMode = 'auto'">自动</button>
+                <button class="tier-btn" :class="{ active: settings.modelVisionMode === 'vision' }" @click="settings.modelVisionMode = 'vision'">支持图片</button>
+                <button class="tier-btn" :class="{ active: settings.modelVisionMode === 'text' }" @click="settings.modelVisionMode = 'text'">纯文本</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 搜索服务 -->
+          <div v-else-if="activeSection === 'search'" class="section-page">
+            <h3 class="sub-title">Tavily 搜索</h3>
+            <div class="field">
+              <label>Tavily API Key</label>
+              <div class="password-field">
+                <input v-model="settings.tavilyApiKey" :type="showSearchKey ? 'text' : 'password'" placeholder="tvly-..." />
+                <button class="btn-toggle-pw" @click="showSearchKey = !showSearchKey">
+                  <svg v-if="!showSearchKey" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                  <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                </button>
+              </div>
+              <span class="range-hint">仅保存在本地；导出数据时会自动脱敏，不会写入备份文件。</span>
+            </div>
+            <div class="field">
+              <label>搜索深度</label>
+              <div class="tier-grid">
+                <button
+                  class="tier-btn"
+                  :class="{ active: settings.searchDepth === 'basic' }"
+                  @click="settings.searchDepth = 'basic'"
+                >
+                  Basic
+                </button>
+                <button
+                  class="tier-btn"
+                  :class="{ active: settings.searchDepth === 'advanced' }"
+                  @click="settings.searchDepth = 'advanced'"
+                >
+                  Advanced
                 </button>
               </div>
             </div>
@@ -330,7 +373,7 @@
             <p class="hint">导出文件包含版本号、导出时间与全部应用数据，文件名带日期，可用于备份或迁移到其他设备。</p>
             <p class="hint protect-hint">
               <i class="fa-solid fa-shield-halved"></i>
-              API Key 等敏感配置不会写入导出文件；导入时也会保留本机当前的 API Key。
+              API Key 与搜索 Key 等敏感配置不会写入导出文件；导入时也会保留本机当前的 API Key 和 Tavily Key。
             </p>
 
             <div class="divider"></div>
@@ -363,6 +406,7 @@ import {
 const settings = useSettingsStore()
 const visible = ref(false)
 const showKey = ref(false)
+const showSearchKey = ref(false)
 const fileInput = ref(null)
 const importDataInput = ref(null)
 const voices = ref([])
@@ -371,6 +415,7 @@ const voices = ref([])
 const sections = [
   { key: 'user', title: '用户信息', desc: '昵称、头像与朗读音色' },
   { key: 'model', title: '模型设置', desc: '模型选择与 API 配置' },
+  { key: 'search', title: '搜索服务', desc: 'Tavily API Key 与搜索深度' },
   { key: 'params', title: '参数设置', desc: 'Temperature、Top P 与上下文/输出长度' },
   { key: 'appearance', title: '外观设置', desc: '自定义背景、符号文字样式与头像显示' },
   { key: 'prompt', title: '提示设置', desc: '人设提示词与启用状态' },

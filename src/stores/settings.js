@@ -27,6 +27,13 @@ export const useSettingsStore = defineStore('settings', () => {
     ttsVoice: '',
     darkMode: false,
     linkSkillEnabled: true,
+    documentSkillEnabled: false,
+    ocrSkillEnabled: false,
+    modelVisionMode: 'auto',
+    searchSkillEnabled: false,
+    tavilyApiKey: '',
+    searchDepth: 'basic',
+    searchMaxResults: 5,
     backgroundImage: '',
     symbolRules: defaultSymbolRules(),
     hideUserAvatar: false,
@@ -50,6 +57,13 @@ export const useSettingsStore = defineStore('settings', () => {
   const ttsVoice = ref(saved.ttsVoice ?? defaults.ttsVoice)
   const darkMode = ref(saved.darkMode ?? window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? defaults.darkMode)
   const linkSkillEnabled = ref(saved.linkSkillEnabled ?? defaults.linkSkillEnabled)
+  const documentSkillEnabled = ref(saved.documentSkillEnabled ?? defaults.documentSkillEnabled)
+  const ocrSkillEnabled = ref(saved.ocrSkillEnabled ?? defaults.ocrSkillEnabled)
+  const modelVisionMode = ref(saved.modelVisionMode ?? defaults.modelVisionMode)
+  const searchSkillEnabled = ref(saved.searchSkillEnabled ?? defaults.searchSkillEnabled)
+  const tavilyApiKey = ref(saved.tavilyApiKey ?? defaults.tavilyApiKey)
+  const searchDepth = ref(saved.searchDepth ?? defaults.searchDepth)
+  const searchMaxResults = ref(saved.searchMaxResults ?? defaults.searchMaxResults)
   const backgroundImage = ref(saved.backgroundImage ?? defaults.backgroundImage)
   const symbolRules = ref(Array.isArray(saved.symbolRules) && saved.symbolRules.length ? saved.symbolRules : defaults.symbolRules)
   const hideUserAvatar = ref(saved.hideUserAvatar ?? defaults.hideUserAvatar)
@@ -110,6 +124,13 @@ export const useSettingsStore = defineStore('settings', () => {
       ttsVoice: ttsVoice.value,
       darkMode: darkMode.value,
       linkSkillEnabled: linkSkillEnabled.value,
+      documentSkillEnabled: documentSkillEnabled.value,
+      ocrSkillEnabled: ocrSkillEnabled.value,
+      modelVisionMode: modelVisionMode.value,
+      searchSkillEnabled: searchSkillEnabled.value,
+      tavilyApiKey: tavilyApiKey.value,
+      searchDepth: searchDepth.value,
+      searchMaxResults: searchMaxResults.value,
       backgroundImage: backgroundImage.value,
       symbolRules: symbolRules.value,
       hideUserAvatar: hideUserAvatar.value,
@@ -121,7 +142,7 @@ export const useSettingsStore = defineStore('settings', () => {
 
   // 自动持久化：任何设置变更立刻保存
   watch(
-    [apiKey, apiBase, model, temperature, maxTokens, contextLength, topP, personaPrompt, userName, thinkingEnabled, userAvatar, personaEnabled, ttsVoice, darkMode, linkSkillEnabled, backgroundImage, hideUserAvatar, hideAiAvatar],
+    [apiKey, apiBase, model, temperature, maxTokens, contextLength, topP, personaPrompt, userName, thinkingEnabled, userAvatar, personaEnabled, ttsVoice, darkMode, linkSkillEnabled, documentSkillEnabled, ocrSkillEnabled, modelVisionMode, searchSkillEnabled, tavilyApiKey, searchDepth, searchMaxResults, backgroundImage, hideUserAvatar, hideAiAvatar],
     () => persist(),
     { deep: false }
   )
@@ -129,7 +150,9 @@ export const useSettingsStore = defineStore('settings', () => {
 
   return {
     apiKey, apiBase, model, temperature, maxTokens, contextLength, topP, personaPrompt, userName, thinkingEnabled, userAvatar, personaEnabled, ttsVoice, darkMode, linkSkillEnabled,
-    backgroundImage, symbolRules, hideUserAvatar, hideAiAvatar,
+    backgroundImage, symbolRules, hideUserAvatar, hideAiAvatar, documentSkillEnabled,
+    ocrSkillEnabled, modelVisionMode,
+    searchSkillEnabled, tavilyApiKey, searchDepth, searchMaxResults,
     modelPresets, applyPreset, persist, settingsReady, defaults,
   }
 })

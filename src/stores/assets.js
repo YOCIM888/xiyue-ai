@@ -16,8 +16,11 @@ export const useAssetsStore = defineStore('assets', () => {
     [...assets.value].sort((a, b) => b.updatedAt - a.updatedAt)
   )
 
-  function create(title = '新文档', content = '') {
+  function create(title = '新文档', content = '', meta = {}) {
     const a = { id: nextId++, title, content, createdAt: Date.now(), updatedAt: Date.now() }
+    for (const key of ['fileName', 'fileType', 'fileSize', 'truncated', 'originalLength']) {
+      if (meta[key] !== undefined) a[key] = meta[key]
+    }
     assets.value.push(a)
     save()
     return a

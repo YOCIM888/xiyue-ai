@@ -17,8 +17,6 @@
         <div class="head-sub" :class="{ typing: typingVisible }">{{ subtitle }}</div>
       </div>
 
-      <ContextRing :used="contextUsed" :limit="contextLimit" />
-
       <button class="head-icon-btn" title="更多" @click="openMenu">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="19" cy="12" r="1.7" /></svg>
       </button>
@@ -130,6 +128,7 @@
             <span>{{ listening ? '聆听中' : '语音' }}</span>
             <span v-if="listening" class="voice-wave"><i></i><i></i><i></i></span>
           </button>
+          <ContextRing class="composer-ctx" :used="contextUsed" :limit="contextLimit" align="right" pop-direction="up" :size="22" />
         </div>
       </div>
     </footer>
@@ -782,6 +781,10 @@ async function deleteGroup() {
   margin-top: 6px;
   padding-top: 6px;
   border-top: 1px solid var(--border-color);
+}
+.composer-ctx {
+  margin-left: auto;
+  flex-shrink: 0;
 }
 .tool-btn {
   display: inline-flex;

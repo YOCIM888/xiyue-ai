@@ -13,7 +13,6 @@
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></svg>
         <span>重新开始</span>
       </button>
-      <ContextRing :used="contextUsed" :limit="contextLimit" />
     </header>
 
     <div ref="feedEl" class="stage-feed">
@@ -80,6 +79,7 @@
             :disabled="store.loading"
           />
           <button class="custom-send" type="submit" :disabled="!customText.trim() || store.loading">提交</button>
+          <ContextRing class="custom-ctx" :used="contextUsed" :limit="contextLimit" align="right" pop-direction="up" :size="22" />
         </form>
       </div>
     </footer>
@@ -432,6 +432,9 @@ async function restart() {
   align-items: center;
   gap: 8px;
   margin-top: 6px;
+}
+.custom-ctx {
+  flex-shrink: 0;
 }
 .custom-key {
   background: var(--accent-light);

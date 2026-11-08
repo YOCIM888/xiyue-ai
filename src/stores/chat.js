@@ -3,8 +3,22 @@ import { ref, computed } from 'vue'
 import { useTopicsStore } from './topics'
 import { useSettingsStore } from './settings'
 import { useMemoryStore } from './memory'
+import { useAssetsStore } from './assets'
 import { sendChatRequest } from '../services/api'
-import { attachLinkContext } from '../services/linkReader'
+import { attachLinkContext, appendContextToLastUser } from '../services/linkReader'
+import {
+  detectSearchIntent,
+  detectSearchReply,
+  searchWeb,
+  buildSearchContext,
+} from '../services/webSearch'
+import {
+  detectVisionSupport,
+  isVisionUnsupportedError,
+  prepareOcrImages,
+  OCR_INSTRUCTION,
+  OCR_MAX_IMAGES,
+} from '../services/ocr'
 import { detectMemoryCommand, extractMemoryEntries } from '../services/memory'
 import {
   createConversation,
@@ -27,6 +41,8 @@ export const useChatStore = defineStore('chat', () => {
   const streamingThinking = ref('')
   const isLoading = ref(false)
   const abortController = ref(null)
+  // 等待用户确认「要不要联网搜索」的原问题
+  const pendingSearch = ref(null)
 
   const branches = computed(() => conversation.value?.branches || [])
   const activeBranch = computed(() =>
@@ -35,6 +51,7 @@ export const useChatStore = defineStore('chat', () => {
   const messages = computed(() => activeBranch.value?.messages || [])
 
   function loadMessages(topicId) {
+    pendingSearch.value = null
     if (!topicId) {
       conversation.value = createConversation()
       activeBranchId.value = 'b-main'
@@ -76,26 +93,68 @@ export const useChatStore = defineStore('chat', () => {
     saveMessages()
   }
 
-  async function generateReply(history, linkText) {
+  async function generateReply(history, linkText, documentIds = [], searchBlock = '') {
     const settings = useSettingsStore()
+    const ocrEnabled = !!settings.ocrSkillEnabled
+    const lastUser = [...history].reverse().find(m => m.role === 'user')
+    const hasImages = Array.isArray(lastUser?.images) && lastUser.images.length > 0
+
+    // 配置里明确是纯文本模型：直接提示，不发起请求
+    if (ocrEnabled && hasImages && detectVisionSupport(settings.model, settings.apiBase, settings.modelVisionMode) === 'text') {
+      return {
+        content: `⚠️ 当前模型「${settings.model}」是纯文本模型，无法读取图片。\n\n` +
+          `图片理解 / OCR 需要把图片交给支持视觉的模型（如 GPT-4o、Claude、Gemini、Qwen-VL 等）。\n` +
+          `可以在「设置 → 模型设置」中切换到视觉模型，或把「模型图片能力」改为「支持图片 / 自动判断」后重试。\n\n` +
+          `提示：这不是本地 OCR，应用不会在设备上识别文字。`,
+      }
+    }
+
     isLoading.value = true
     streamingContent.value = ''
     streamingThinking.value = ''
 
     let fullContent = ''
     let fullThinking = ''
+    let imageNotice = ''
     try {
       const controller = new AbortController()
       abortController.value = controller
 
+      // 图片理解开启时先压缩并控制数量；关闭时保持原有行为
+      let historyForRequest = history
+      if (ocrEnabled && hasImages) {
+        const prepared = await prepareOcrImages(lastUser.images)
+        historyForRequest = history.map(m => (m === lastUser ? { ...m, images: prepared.images } : m))
+        if (prepared.dropped > 0) {
+          imageNotice = `本次共 ${lastUser.images.length} 张图片，为控制上下文体积，仅前 ${OCR_MAX_IMAGES} 张参与识别。`
+          window.__ui?.showToast(imageNotice, 'info', 3600)
+        }
+      }
+
       const systemPrompt = buildSystemPrompt()
       const chatMessages = systemPrompt
-        ? [{ role: 'system', content: systemPrompt }, ...history.map(m => ({ role: m.role, content: m.content, images: m.images }))]
-        : history.map(m => ({ role: m.role, content: m.content, images: m.images }))
+        ? [{ role: 'system', content: systemPrompt }, ...historyForRequest.map(m => ({ role: m.role, content: m.content, images: m.images }))]
+        : historyForRequest.map(m => ({ role: m.role, content: m.content, images: m.images }))
 
       let apiMessages = chatMessages
       if (settings.linkSkillEnabled && linkText) {
         apiMessages = await attachLinkContext(chatMessages, linkText)
+      }
+      if (settings.documentSkillEnabled && documentIds.length) {
+        const { attachDocumentContext } = await import('../services/documentParser')
+        const assetsStore = useAssetsStore()
+        const documents = documentIds
+          .map(id => assetsStore.assets.find(a => a.id === id))
+          .filter(Boolean)
+        if (documents.length) {
+          apiMessages = attachDocumentContext(apiMessages, documents)
+        }
+      }
+      if (searchBlock) {
+        apiMessages = appendContextToLastUser(apiMessages, searchBlock)
+      }
+      if (ocrEnabled && hasImages) {
+        apiMessages = appendContextToLastUser(apiMessages, OCR_INSTRUCTION)
       }
 
       await sendChatRequest({
@@ -120,7 +179,8 @@ export const useChatStore = defineStore('chat', () => {
         },
       })
 
-      return { content: fullContent, thinking: fullThinking || undefined }
+      const content = imageNotice ? `> ${imageNotice}\n\n${fullContent}` : fullContent
+      return { content, thinking: fullThinking || undefined }
     } catch (err) {
       if (err.name === 'AbortError') {
         if (fullContent || fullThinking) {
@@ -128,7 +188,16 @@ export const useChatStore = defineStore('chat', () => {
         }
         return null
       }
-      return { content: `❌ 错误: ${err.message}` }
+      const message = String(err?.message || err || '')
+      if (ocrEnabled && hasImages && isVisionUnsupportedError(message)) {
+        return {
+          content: `⚠️ 图片理解失败：当前模型「${settings.model}」似乎不支持图片输入。\n\n` +
+            `接口返回：${message}\n\n` +
+            `可以：1) 在「设置 → 模型设置」中换用支持视觉的模型；2) 把「模型图片能力」设为「纯文本」，发图时会提前提示；3) 或先把图片里的文字复制成文本再发送。\n\n` +
+            `提示：图片理解依赖模型视觉能力，不是本地 OCR。`,
+        }
+      }
+      return { content: `❌ 错误: ${message}` }
     } finally {
       isLoading.value = false
       streamingContent.value = ''
@@ -137,10 +206,29 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  async function sendMessage(userContent, images = []) {
+  async function sendMessage(userContent, images = [], documentIds = []) {
     const settings = useSettingsStore()
     const { topics, topicId, branch } = ensureConversation()
     if (!topicId) return
+
+    const pending = pendingSearch.value
+    let confirmedQuery = ''
+    let confirmedSearch = false
+    let declinedSearch = false
+
+    if (pending) {
+      const sameConversation = pending.topicId === topicId && pending.branchId === branch.id
+      if (settings.searchSkillEnabled && sameConversation) {
+        const kind = detectSearchReply(userContent)
+        if (kind === 'yes') {
+          confirmedQuery = pending.query
+          confirmedSearch = true
+        } else if (kind === 'no') {
+          declinedSearch = true
+        }
+      }
+      pendingSearch.value = null
+    }
 
     branch.messages.push({
       id: newMessageId(),
@@ -157,15 +245,104 @@ export const useChatStore = defineStore('chat', () => {
       topics.renameTopic(topicId, userContent.slice(0, 30) + (userContent.length > 30 ? '…' : ''))
     }
 
+    if (declinedSearch) {
+      branch.messages.push({
+        id: newMessageId(),
+        role: 'assistant',
+        content: '好的，不联网搜索。你可以继续直接提问。',
+        ts: Date.now(),
+      })
+      saveMessages(topicId)
+      topics.touchTopic(topicId)
+      return
+    }
+
+    let intent = 'none'
+    if (confirmedSearch) intent = 'search'
+    else if (settings.searchSkillEnabled) intent = detectSearchIntent(userContent)
+
+    let searchNotice = ''
+
+    // 意图不明确时先问一句，不直接发请求；没配 Key 时问了也搜不了，直接提示
+    if (intent === 'confirm') {
+      if (!String(settings.tavilyApiKey || '').trim()) {
+        searchNotice = '未配置 Tavily API Key，已跳过联网搜索。请在 设置 → 搜索服务 中填写。'
+        window.__ui?.showToast(searchNotice, 'error', 4500)
+      } else {
+        pendingSearch.value = { query: userContent, topicId, branchId: branch.id }
+        branch.messages.push({
+          id: newMessageId(),
+          role: 'assistant',
+          content: '这个问题可能需要联网确认最新信息。要我用 Tavily 搜一下再回答吗？回复「搜」即可；不想搜就回复「不用」。',
+          ts: Date.now(),
+        })
+        saveMessages(topicId)
+        topics.touchTopic(topicId)
+        return
+      }
+    }
+
+    let searchBlock = ''
+    if (intent === 'search') {
+      const query = confirmedSearch ? confirmedQuery : userContent
+      const apiKey = String(settings.tavilyApiKey || '').trim()
+
+      if (!apiKey) {
+        const msg = '未配置 Tavily API Key，已跳过联网搜索。请在 设置 → 搜索服务 中填写。'
+        searchNotice = msg
+        window.__ui?.showToast(msg, 'error', 4500)
+        if (confirmedSearch) {
+          branch.messages.push({
+            id: newMessageId(),
+            role: 'assistant',
+            content: msg,
+            ts: Date.now(),
+          })
+          saveMessages(topicId)
+          topics.touchTopic(topicId)
+          return
+        }
+      } else {
+        window.__ui?.showToast('正在联网搜索…', 'info', 1800)
+        const result = await searchWeb(query, {
+          apiKey,
+          depth: settings.searchDepth,
+          maxResults: settings.searchMaxResults,
+        })
+
+        if (result.ok) {
+          const built = buildSearchContext(query, result)
+          searchBlock = built.text
+          if (built.truncated) {
+            window.__ui?.showToast('搜索结果较长，已截断至 6000 字后注入', 'info', 3200)
+          }
+        } else {
+          searchNotice = result.message
+          window.__ui?.showToast(result.message, 'error', 4500)
+          if (confirmedSearch) {
+            branch.messages.push({
+              id: newMessageId(),
+              role: 'assistant',
+              content: result.message,
+              ts: Date.now(),
+            })
+            saveMessages(topicId)
+            topics.touchTopic(topicId)
+            return
+          }
+        }
+      }
+    }
+
     const history = branch.messages.slice()
-    const reply = await generateReply(history, userContent)
+    const reply = await generateReply(history, userContent, documentIds, searchBlock)
     if (!reply) return
 
     branch.messages.push({
       id: newMessageId(),
       role: 'assistant',
       thinking: reply.thinking,
-      content: reply.content,
+      content: searchNotice ? `> ${searchNotice}\n\n${reply.content}` : reply.content,
       ts: Date.now(),
     })
     saveMessages(topicId)
@@ -193,6 +370,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function clearMessages() {
+    pendingSearch.value = null
     conversation.value = createConversation()
     activeBranchId.value = 'b-main'
     const topics = useTopicsStore()

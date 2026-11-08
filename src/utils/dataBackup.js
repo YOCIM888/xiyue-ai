@@ -95,14 +95,22 @@ export function computeStorageUsage() {
 function maskSettings(raw) {
   try {
     const obj = JSON.parse(raw)
-    if (obj && typeof obj === 'object' && obj.apiKey) {
-      obj.apiKey = ''
-      return JSON.stringify(obj)
+    if (obj && typeof obj === 'object') {
+      const fields = []
+      if (obj.apiKey) {
+        obj.apiKey = ''
+        fields.push('ai_chat_settings.apiKey')
+      }
+      if (obj.tavilyApiKey) {
+        obj.tavilyApiKey = ''
+        fields.push('ai_chat_settings.tavilyApiKey')
+      }
+      if (fields.length) return { raw: JSON.stringify(obj), fields }
     }
   } catch {
     // 设置损坏时按原样导出
   }
-  return raw
+  return { raw, fields: [] }
 }
 
 export function buildBackupPayload() {
@@ -113,9 +121,9 @@ export function buildBackupPayload() {
     if (!key) continue
     let raw = localStorage.getItem(key) ?? ''
     if (key === SETTINGS_KEY) {
-      const maskedRaw = maskSettings(raw)
-      if (maskedRaw !== raw) masked.push('ai_chat_settings.apiKey')
-      raw = maskedRaw
+      const result = maskSettings(raw)
+      if (result.fields.length) masked.push(...result.fields)
+      raw = result.raw
     }
     data[key] = raw
   }
@@ -189,6 +197,15 @@ export function summarizeBackup(entries) {
     parts.push(`梦境 ${Object.keys(dream).length} 部作品进度`)
   }
   if (Array.isArray(assets) && assets.length) parts.push(`文档 ${assets.length} 篇`)
+
+  const settingsObj = parseRaw(entries[SETTINGS_KEY] || '{}', {})
+  if (settingsObj && typeof settingsObj === 'object') {
+    if (settingsObj.searchSkillEnabled) {
+      parts.push('联网搜索已开启')
+    } else if (settingsObj.tavilyApiKey) {
+      parts.push('搜索服务已配置')
+    }
+  }
   if (entries[SETTINGS_KEY]) parts.push('应用设置')
 
   return parts
@@ -214,12 +231,16 @@ export function parseBackup(text) {
 }
 
 export function applyBackup(entries) {
-  // 导入前保留本机 API Key，避免备份中的脱敏空值覆盖真实密钥
+  // 导入前保留本机密钥，避免备份中的脱敏空值覆盖真实 Key
   let currentApiKey = ''
+  let currentTavilyKey = ''
   try {
-    currentApiKey = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}').apiKey || ''
+    const current = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')
+    currentApiKey = current.apiKey || ''
+    currentTavilyKey = current.tavilyApiKey || ''
   } catch {
     currentApiKey = ''
+    currentTavilyKey = ''
   }
 
   // 清除全部应用数据（本域名下 localStorage 仅由本应用使用）
@@ -235,6 +256,7 @@ export function applyBackup(entries) {
       const obj = parseRaw(raw, null)
       if (obj && typeof obj === 'object') {
         if (!obj.apiKey && currentApiKey) obj.apiKey = currentApiKey
+        if (!obj.tavilyApiKey && currentTavilyKey) obj.tavilyApiKey = currentTavilyKey
         localStorage.setItem(key, JSON.stringify(obj))
         continue
       }

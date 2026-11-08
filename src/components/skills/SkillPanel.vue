@@ -26,9 +26,70 @@
               <span class="switch-track"><span class="switch-thumb"></span></span>
             </label>
           </div>
+          
 
-          <p class="skill-hint">
-            开启后，消息中包含 http/https 链接时会自动抓取网页正文，并随消息一起提供给模型。每次最多读取 3 个链接，单个链接约 8000 字。
+          <div class="skill-card">
+            <div class="skill-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
+            </div>
+            <div class="skill-info">
+              <div class="skill-name">
+                文档解析
+                <span class="skill-tag muted">默认关闭</span>
+              </div>
+              <div class="skill-desc">从「我的文档」选择文件，读取正文后作为上下文提供给 AI</div>
+            </div>
+            <label class="switch" :title="settings.documentSkillEnabled ? '点击关闭' : '点击开启'">
+              <input v-model="settings.documentSkillEnabled" type="checkbox" />
+              <span class="switch-track"><span class="switch-thumb"></span></span>
+            </label>
+          </div>
+
+          <div class="skill-card">
+            <div class="skill-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            </div>
+            <div class="skill-info">
+              <div class="skill-name">
+                图片理解 / OCR
+                <span class="skill-tag muted">默认关闭</span>
+              </div>
+              <div class="skill-desc">把图片交给视觉模型读字并概括关键内容，不是本地 OCR</div>
+            </div>
+            <label class="switch" :title="settings.ocrSkillEnabled ? '点击关闭' : '点击开启'">
+              <input v-model="settings.ocrSkillEnabled" type="checkbox" />
+              <span class="switch-track"><span class="switch-thumb"></span></span>
+            </label>
+          </div>
+
+          <div class="skill-card">
+            <div class="skill-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            </div>
+            <div class="skill-info">
+              <div class="skill-name">
+                联网搜索
+                <span class="skill-tag muted">默认关闭</span>
+              </div>
+              <div class="skill-desc">识别明确搜索意图，用 Tavily 检索最新信息并附带来源链接</div>
+            </div>
+            <label class="switch" :title="settings.searchSkillEnabled ? '点击关闭' : '点击开启'">
+              <input v-model="settings.searchSkillEnabled" type="checkbox" />
+              <span class="switch-track"><span class="switch-thumb"></span></span>
+            </label>
+          </div>
+
+          <div class="skill-option">
+            <div class="skill-option-head">
+              <span>结果条数上限</span>
+              <span class="skill-option-value">{{ settings.searchMaxResults }} 条</span>
+            </div>
+            <input v-model.number="settings.searchMaxResults" type="range" min="1" max="10" step="1" />
+            <div class="skill-option-hint">1–10 条，默认 5 条；条数越多占用上下文越多。</div>
+          </div>
+
+          <p v-if="settings.ocrSkillEnabled" class="skill-hint" :class="{ warn: visionStatus === 'text' }">
+            当前模型「{{ settings.model }}」{{ visionStatusText }}。可在 设置 → 模型设置 手动指定「模型图片能力」。
           </p>
         </div>
       </div>
@@ -37,11 +98,21 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
+import { detectVisionSupport } from '../../services/ocr'
 
 const settings = useSettingsStore()
 const visible = ref(false)
+
+const visionStatus = computed(() =>
+  detectVisionSupport(settings.model, settings.apiBase, settings.modelVisionMode)
+)
+const visionStatusText = computed(() => {
+  if (visionStatus.value === 'vision') return '已判定支持图片'
+  if (visionStatus.value === 'text') return '被判定为纯文本模型，发图会直接提示'
+  return '视觉能力未确认，将根据接口返回判断'
+})
 
 function open() { visible.value = true }
 function close() { visible.value = false }
@@ -127,6 +198,9 @@ defineExpose({ open, close })
   border-radius: 12px;
   background: var(--bg-card);
 }
+.skill-card + .skill-card {
+  margin-top: 12px;
+}
 .skill-icon {
   width: 40px;
   height: 40px;
@@ -157,6 +231,10 @@ defineExpose({ open, close })
   color: var(--accent);
   font-size: 10px;
   font-weight: 500;
+}
+.skill-tag.muted {
+  background: var(--bg-hover);
+  color: var(--text-muted);
 }
 .skill-desc {
   margin-top: 4px;
@@ -204,10 +282,44 @@ defineExpose({ open, close })
   background: #fff;
 }
 
+.skill-option {
+  margin-top: 12px;
+  padding: 12px 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-card);
+}
+.skill-option-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.skill-option-value {
+  color: var(--accent);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.skill-option input[type="range"] {
+  width: 100%;
+  margin: 10px 0 4px;
+  accent-color: var(--accent);
+}
+.skill-option-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
 .skill-hint {
   margin: 16px 4px 0;
   font-size: 12px;
   line-height: 1.7;
   color: var(--text-muted);
+}
+.skill-hint.warn {
+  color: var(--danger);
 }
 </style>

@@ -6,7 +6,6 @@
         <span class="circle-sub">好友动态</span>
       </div>
       <div class="circle-actions">
-        <ContextRing :used="contextUsed" :limit="contextLimit" />
         <button class="action-btn" :disabled="store.refreshing" title="刷新动态" @click="refresh">
           <svg :class="{ spinning: store.refreshing }" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
           <span>{{ store.refreshing ? '刷新中' : '刷新' }}</span>
@@ -101,6 +100,8 @@
         </div>
       </article>
     </div>
+
+    <ContextRing class="circle-ctx" :used="contextUsed" :limit="contextLimit" align="right" pop-direction="up" :size="22" />
   </section>
 </template>
 
@@ -266,12 +267,24 @@ async function submitComment(post) {
 
 <style scoped>
 .starry-circle {
+  position: relative;
   flex: 1;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
   background: var(--bg-primary);
+}
+/* 圈子窗口没有全局输入卡片，圆环固定在窗口右下角，并随窗口一起隐藏 */
+.circle-ctx {
+  position: absolute;
+  right: 18px;
+  bottom: 14px;
+  z-index: 20;
+  padding: 3px;
+  border-radius: 50%;
+  background: var(--bg-primary);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
 }
 .circle-head {
   display: flex;
@@ -333,7 +346,7 @@ async function submitComment(post) {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 14px 18px 24px;
+  padding: 14px 18px 58px;
 }
 .refreshing-card {
   display: flex;
@@ -589,10 +602,14 @@ async function submitComment(post) {
 
 @media (max-width: 768px) {
   .circle-feed {
-    padding: 10px 12px 20px;
+    padding: 10px 12px 52px;
   }
   .circle-head {
     padding: 10px 12px;
+  }
+  .circle-ctx {
+    right: 12px;
+    bottom: 12px;
   }
 }
 </style>

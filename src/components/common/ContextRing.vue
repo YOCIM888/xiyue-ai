@@ -1,6 +1,7 @@
 <template>
-  <span ref="rootEl" class="ctx-ring-wrap" :class="`align-${align}`">
+  <span ref="rootEl" class="ctx-ring-wrap" :class="[`align-${align}`, { 'pop-up': popDirection === 'up' }]">
     <button
+      type="button"
       class="ctx-ring-btn"
       :class="{ open }"
       :title="`上下文用量 ${usedText} / ${limitText} tokens`"
@@ -54,6 +55,7 @@ const props = defineProps({
   limit: { type: Number, default: 131072 },
   size: { type: Number, default: 24 },
   align: { type: String, default: 'right' },
+  popDirection: { type: String, default: 'down' },
 })
 
 const rootEl = ref(null)
@@ -163,6 +165,10 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
 }
 .align-left .ctx-pop {
   left: 0;
+}
+.pop-up .ctx-pop {
+  top: auto;
+  bottom: calc(100% + 6px);
 }
 .ctx-pop-head {
   display: flex;

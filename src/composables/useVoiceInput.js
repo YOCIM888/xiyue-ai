@@ -3,40 +3,86 @@ import { onBeforeUnmount, ref } from 'vue'
 /**
  * 浏览器语音输入（Web Speech API）
  * - onUpdate(text)：识别到内容（含临时结果）时回填输入框
- * - onFinish()：识别出最终文字后触发，用于自动发送
+ * - onFinish()：自然识别结束后触发，用于自动发送
+ * 手动停止时只结束识别并保留已识别文字，不自动发送。
  */
 export function useVoiceInput({ getBaseText = () => '', onUpdate = () => {}, onFinish = () => {} } = {}) {
   const listening = ref(false)
   let recognition = null
+  let micStream = null
   let finalText = ''
+  let starting = false
+  let manualStop = false
+  let session = 0
+
+  // 真正释放麦克风：停止我们持有的音轨
+  function releaseMic() {
+    if (micStream) {
+      micStream.getTracks().forEach(track => {
+        try { track.stop() } catch {}
+      })
+      micStream = null
+    }
+  }
 
   function stop() {
-    recognition?.stop()
+    session += 1
+    manualStop = true
+    starting = false
+    listening.value = false
+    const rec = recognition
+    recognition = null
+    if (rec) {
+      try { rec.abort() } catch {}
+    }
+    releaseMic()
   }
 
-  function toggle() {
-    if (listening.value) stop()
-    else start()
-  }
-
-  function start() {
+  async function start() {
+    if (starting || recognition) return
     const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!Ctor) {
       window.__ui?.showToast('当前浏览器不支持语音输入，请使用 Chrome 或 Edge', 'error', 3500)
       return
     }
 
-    const baseText = (getBaseText() || '').trim()
+    const id = ++session
+    starting = true
+    manualStop = false
     finalText = ''
-    recognition = new Ctor()
+    const baseText = (getBaseText() || '').trim()
+
+    // 先申请麦克风并持有音轨，停止时才能真正释放设备
+    if (navigator.mediaDevices?.getUserMedia) {
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      } catch {
+        starting = false
+        listening.value = false
+        window.__ui?.showToast('麦克风权限被拒绝，请在浏览器设置中允许后重试', 'error', 3500)
+        return
+      }
+      // 等待权限期间用户已点击停止
+      if (id !== session || manualStop) {
+        releaseMic()
+        starting = false
+        return
+      }
+    }
+
+    const rec = new Ctor()
+    recognition = rec
     recognition.lang = navigator.language || 'zh-CN'
     recognition.continuous = false
     recognition.interimResults = true
     recognition.maxAlternatives = 1
 
-    recognition.onstart = () => { listening.value = true }
+    recognition.onstart = () => {
+      if (id === session) listening.value = true
+    }
 
     recognition.onresult = (event) => {
+      if (id !== session) return
       let interim = ''
       finalText = ''
       for (let i = 0; i < event.results.length; i += 1) {
@@ -50,6 +96,7 @@ export function useVoiceInput({ getBaseText = () => '', onUpdate = () => {}, onF
     }
 
     recognition.onerror = (event) => {
+      if (id !== session) return
       listening.value = false
       if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
         window.__ui?.showToast('麦克风权限被拒绝，请在浏览器设置中允许后重试', 'error', 3500)
@@ -61,22 +108,34 @@ export function useVoiceInput({ getBaseText = () => '', onUpdate = () => {}, onF
     }
 
     recognition.onend = () => {
+      if (id !== session) return
       listening.value = false
       recognition = null
-      if (finalText.trim()) onFinish()
+      starting = false
+      releaseMic()
+      if (!manualStop && finalText.trim()) onFinish()
     }
 
     try {
       recognition.start()
     } catch {
-      listening.value = false
-      recognition = null
+      if (id === session) {
+        listening.value = false
+        recognition = null
+      }
+      releaseMic()
+    } finally {
+      starting = false
     }
   }
 
+  function toggle() {
+    if (listening.value || starting) stop()
+    else start()
+  }
+
   onBeforeUnmount(() => {
-    recognition?.abort()
-    recognition = null
+    stop()
   })
 
   return { listening, toggle }

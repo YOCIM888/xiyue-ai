@@ -9,6 +9,9 @@
           </h2>
           <div class="header-actions">
             <template v-if="!editing">
+              <button class="icon-btn" :class="{ active: importing }" :disabled="importing" title="导入文件（PDF / DOCX / TXT / Markdown）" @click="triggerImport">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              </button>
               <button class="icon-btn" title="新建文档" @click="createNew">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
               </button>
@@ -24,6 +27,7 @@
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             </button>
           </div>
+          <input ref="importInput" type="file" accept=".pdf,.docx,.txt,.md,.markdown,.doc" style="display:none" @change="handleImportFile" />
         </div>
 
         <div v-if="editing" class="asset-editor">
@@ -59,6 +63,7 @@
             </span>
             <svg v-else class="item-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
             <span class="asset-item-title">{{ a.title }}</span>
+            <span v-if="a.truncated" class="trunc-tag">已截断</span>
             <span class="asset-item-time">{{ fmtTime(a.updatedAt) }}</span>
             <button v-if="!selectMode" class="item-del" title="删除" @click.stop="delAsset(a.id)">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
@@ -79,6 +84,8 @@ const visible = ref(false)
 const editing = ref(null)
 const selectMode = ref(false)
 const selected = ref([])
+const importInput = ref(null)
+const importing = ref(false)
 
 const allSelected = computed(() => store.sorted.length > 0 && selected.value.length === store.sorted.length)
 
@@ -100,6 +107,40 @@ function createNew() {
   selectMode.value = false
   selected.value = []
   editing.value = { id: null, title: '', content: '' }
+}
+
+function triggerImport() {
+  if (!importing.value) importInput.value?.click()
+}
+
+async function handleImportFile(e) {
+  const file = e.target.files?.[0]
+  e.target.value = ''
+  if (!file) return
+
+  importing.value = true
+  window.__ui?.showToast(`正在解析「${file.name}」…`, 'info', 2000)
+  try {
+    const { parseDocumentFile } = await import('../../services/documentParser')
+    const result = await parseDocumentFile(file)
+    const title = result.fileName.replace(/\.[^.]+$/, '') || result.fileName
+    store.create(title, result.text, {
+      fileName: result.fileName,
+      fileType: result.fileType,
+      fileSize: result.fileSize,
+      truncated: result.truncated,
+      originalLength: result.originalLength,
+    })
+    if (result.truncated) {
+      window.__ui?.showToast(`已导入「${title}」：正文共 ${result.originalLength} 字，已截断保留前 ${result.text.length} 字`, 'info', 4500)
+    } else {
+      window.__ui?.showToast(`已导入「${title}」`, 'success')
+    }
+  } catch (err) {
+    window.__ui?.showToast(err?.message || '文档解析失败', 'error', 4500)
+  } finally {
+    importing.value = false
+  }
 }
 
 function openAsset(a) {
@@ -197,6 +238,7 @@ async function deleteSelected() {
 .asset-item.selected { background: var(--accent-light); }
 .item-icon { flex-shrink: 0; color: var(--text-muted); }
 .asset-item-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--text-primary); }
+.trunc-tag { flex-shrink: 0; padding: 1px 5px; border-radius: 4px; background: var(--bg-hover); color: var(--text-muted); font-size: 10px; }
 .asset-item-time { font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
 
 .item-check { width: 18px; height: 18px; flex-shrink: 0; border: 1.5px solid var(--border-color); border-radius: 5px; display: flex; align-items: center; justify-content: center; color: #fff; box-sizing: border-box; transition: all 0.15s; }

@@ -44,6 +44,14 @@ function truncate(text) {
     : text
 }
 
+/** 把一段上下文附加到最后一条用户消息上，供模型阅读 */
+export function appendContextToLastUser(chatMessages, block) {
+  const out = chatMessages.map(m => ({ ...m }))
+  const lastUser = [...out].reverse().find(m => m.role === 'user' && typeof m.content === 'string')
+  if (lastUser) lastUser.content += `\n\n${block}`
+  return out
+}
+
 /** 把链接正文附加到最后一条用户消息上，供模型阅读 */
 export async function attachLinkContext(chatMessages, userText) {
   const urls = extractUrls(userText)
@@ -60,10 +68,8 @@ export async function attachLinkContext(chatMessages, userText) {
   }
   if (!chunks.length) return chatMessages
 
-  const out = chatMessages.map(m => ({ ...m }))
-  const lastUser = [...out].reverse().find(m => m.role === 'user' && typeof m.content === 'string')
-  if (lastUser) {
-    lastUser.content += `\n\n以下是用户消息中链接的实际内容，请结合这些内容回答：\n\n${chunks.join('\n\n')}`
-  }
-  return out
+  return appendContextToLastUser(
+    chatMessages,
+    `以下是用户消息中链接的实际内容，请结合这些内容回答：\n\n${chunks.join('\n\n')}`
+  )
 }

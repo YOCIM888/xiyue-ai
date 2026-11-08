@@ -3,12 +3,6 @@
     <div v-if="isMobile && open" class="sidebar-backdrop" @click="open = false"></div>
 
     <aside class="sidebar" @touchstart="onSidebarTouchStart" @touchend="onSidebarTouchEnd">
-      <!-- 搜索 -->
-      <div class="sidebar-search">
-        <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        <input v-model="searchQuery" class="search-input" placeholder="搜索历史对话…" @input="onSearch" />
-      </div>
-
       <!-- 快捷入口 -->
       <div class="sidebar-nav">
         <button class="nav-btn" @click="assetPanel?.open()">
@@ -33,35 +27,45 @@
         </button>
       </div>
 
-      <!-- 历史对话 -->
-      <div class="topic-list-header">
-        <span>历史对话</span>
-      </div>
+      <!-- 历史对话：顶置 / 最近 分组 -->
       <div class="topic-list" ref="topicListRef">
-        <div v-if="filteredTopics.length === 0 && !searchQuery" class="empty-hint">暂无对话记录</div>
-        <div v-if="filteredTopics.length === 0 && searchQuery" class="empty-hint">未找到匹配的对话</div>
-        <div
-          v-for="topic in filteredTopics"
-          :key="topic.id"
-          :ref="el => setTopicRef(topic.id, el)"
-          class="topic-item"
-          :class="{ active: topic.id === topics.currentTopicId, highlight: highlightId === topic.id }"
-          @click="handleSwitch(topic.id)"
-          @contextmenu.prevent="onTopicCtx(topic.id, $event)"
-          @touchstart="onTopicTouchStart(topic.id, $event)"
-          @touchend="onTopicTouchEnd"
-          @touchmove="onTopicTouchMove"
-        >
-          <svg v-if="topic.pinned" class="topic-icon pin" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>
-          <svg v-else class="topic-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-          <div class="topic-info">
-            <span class="topic-title" :title="topic.title">{{ topic.title }}</span>
-            <span class="topic-time">{{ fmtTime(topic.updatedAt) }}</span>
+        <div v-if="topicGroups.length === 0" class="empty-hint">暂无对话记录</div>
+        <div v-for="(group, gi) in topicGroups" :key="group.key" class="topic-group">
+          <div class="group-title">{{ group.label }}</div>
+          <div
+            v-for="topic in group.topics"
+            :key="topic.id"
+            :ref="el => setTopicRef(topic.id, el)"
+            class="topic-item"
+            :class="{ active: topic.id === topics.currentTopicId, selected: selectMode && selectedIds.has(topic.id) }"
+            @click="onTopicClick(topic.id)"
+            @contextmenu.prevent="onTopicCtx(topic.id, $event)"
+            @touchstart="onTopicTouchStart(topic.id, $event)"
+            @touchend="onTopicTouchEnd"
+            @touchmove="onTopicTouchMove"
+          >
+            <span v-if="selectMode" class="topic-check" :class="{ on: selectedIds.has(topic.id) }">
+              <svg v-if="selectedIds.has(topic.id)" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+            </span>
+            <template v-else>
+              <svg v-if="topic.pinned" class="topic-icon pin" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>
+              <svg v-else class="topic-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            </template>
+            <div class="topic-info">
+              <span class="topic-title" :title="topic.title">{{ topic.title }}</span>
+              <span class="topic-time">{{ fmtTime(topic.updatedAt) }}</span>
+            </div>
           </div>
-          <button class="btn-delete" @click.stop="handleDelete(topic.id)" title="删除">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-          </button>
+          <div v-if="gi < topicGroups.length - 1" class="group-divider"></div>
         </div>
+      </div>
+
+      <!-- 多选操作栏 -->
+      <div v-if="selectMode" class="select-bar">
+        <button class="select-btn" @click="toggleSelectAll">{{ allSelected ? '取消全选' : '全选' }}</button>
+        <span class="select-count">已选 {{ selectedIds.size }} 项</span>
+        <button class="select-btn danger" :disabled="!selectedIds.size" @click="deleteSelected">删除</button>
+        <button class="select-btn" @click="exitSelectMode">取消</button>
       </div>
 
       <!-- 底部：用户信息 + 设置 -->
@@ -92,10 +96,47 @@
       <line x1="5" y1="17" x2="19" y2="17"/>
     </svg>
   </button>
+
+  <!-- 对话条目右键 / 长按菜单 -->
+  <Teleport to="body">
+    <div v-if="ctx.show" class="ctx-overlay" @click.self="closeCtx" @contextmenu.prevent>
+      <div class="ctx-menu" :style="{ top: ctx.y + 'px', left: ctx.x + 'px' }">
+        <button class="ctx-item" @click="ctxRename">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+          <span>重命名</span>
+        </button>
+        <button class="ctx-item" @click="ctxTogglePin">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>
+          <span>{{ ctxPinned ? '取消顶置' : '顶置' }}</span>
+        </button>
+        <button class="ctx-item" @click="ctxMulti">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M8 12l3 3 5-6"/></svg>
+          <span>多选</span>
+        </button>
+        <button class="ctx-item danger" @click="ctxDelete">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          <span>删除</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- 重命名对话框 -->
+    <div v-if="rename.show" class="rename-overlay" @click.self="cancelRename">
+      <div class="rename-box">
+        <div class="rename-title">重命名对话</div>
+        <input ref="renameInput" v-model="rename.value" class="rename-input" maxlength="80"
+          @keydown.enter.prevent="confirmRename" @keydown.esc="cancelRename" />
+        <div class="rename-actions">
+          <button class="rename-btn cancel" @click="cancelRename">取消</button>
+          <button class="rename-btn confirm" @click="confirmRename">确定</button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <script setup>
-import { ref, computed, inject, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, inject, nextTick, onMounted, onUnmounted } from 'vue'
 import { useTopicsStore } from '../../stores/topics'
 import { useChatStore } from '../../stores/chat'
 import { useSettingsStore } from '../../stores/settings'
@@ -109,12 +150,127 @@ const emit = defineEmits(['open-settings'])
 
 const open = ref(true)
 const isMobile = ref(false)
-const searchQuery = ref('')
-const highlightId = ref(null)
 const topicListRef = ref(null)
 const topicRefs = {}
 
 function setTopicRef(id, el) { if (el) topicRefs[id] = el }
+
+// 顶置 / 最近 两个分组：没有顶置时不显示顶置区
+const topicGroups = computed(() => {
+  const pinned = topics.topics.filter(t => t.pinned).sort((a, b) => b.updatedAt - a.updatedAt)
+  const recent = topics.topics.filter(t => !t.pinned).sort((a, b) => b.updatedAt - a.updatedAt)
+  const groups = []
+  if (pinned.length) groups.push({ key: 'pinned', label: '顶置', topics: pinned })
+  if (recent.length) groups.push({ key: 'recent', label: '最近', topics: recent })
+  return groups
+})
+
+// 右键 / 长按菜单
+const ctx = ref({ show: false, x: 0, y: 0, id: null })
+const ctxTopic = computed(() => topics.topics.find(t => t.id === ctx.value.id) ?? null)
+const ctxPinned = computed(() => !!ctxTopic.value?.pinned)
+
+function closeCtx() { ctx.value.show = false }
+
+function openCtx(id, x, y) {
+  if (selectMode.value) return
+  ctx.value = {
+    show: true,
+    id,
+    x: Math.max(8, Math.min(x, window.innerWidth - 176)),
+    y: Math.max(8, Math.min(y, window.innerHeight - 190)),
+  }
+}
+
+function onTopicCtx(id, e) {
+  openCtx(id, e.clientX, e.clientY)
+}
+
+function ctxRename() {
+  const id = ctx.value.id
+  closeCtx()
+  startRename(id)
+}
+
+function ctxTogglePin() {
+  const id = ctx.value.id
+  closeCtx()
+  topics.togglePin(id)
+}
+
+function ctxMulti() {
+  const id = ctx.value.id
+  closeCtx()
+  selectMode.value = true
+  selectedIds.value = new Set([id])
+}
+
+function ctxDelete() {
+  const id = ctx.value.id
+  closeCtx()
+  handleDelete(id)
+}
+
+// 重命名
+const rename = ref({ show: false, id: null, value: '' })
+const renameInput = ref(null)
+
+function startRename(id) {
+  const topic = topics.topics.find(t => t.id === id)
+  if (!topic) return
+  rename.value = { show: true, id, value: topic.title }
+  nextTick(() => {
+    renameInput.value?.focus()
+    renameInput.value?.select()
+  })
+}
+
+function cancelRename() { rename.value.show = false }
+
+function confirmRename() {
+  const value = rename.value.value.trim()
+  if (value) topics.renameTopic(rename.value.id, value)
+  rename.value.show = false
+}
+
+// 多选
+const selectMode = ref(false)
+const selectedIds = ref(new Set())
+const allSelected = computed(() =>
+  topics.topics.length > 0 && selectedIds.value.size === topics.topics.length
+)
+
+function onTopicClick(id) {
+  if (longPressed) { longPressed = false; return }
+  if (selectMode.value) {
+    const next = new Set(selectedIds.value)
+    next.has(id) ? next.delete(id) : next.add(id)
+    selectedIds.value = next
+    return
+  }
+  handleSwitch(id)
+}
+
+function toggleSelectAll() {
+  selectedIds.value = allSelected.value ? new Set() : new Set(topics.topics.map(t => t.id))
+}
+
+function exitSelectMode() {
+  selectMode.value = false
+  selectedIds.value = new Set()
+}
+
+async function deleteSelected() {
+  const ids = [...selectedIds.value]
+  if (!ids.length) return
+  const ok = await window.__ui?.showConfirm(`确定删除选中的 ${ids.length} 个对话吗？`) || false
+  if (!ok) return
+  ids.forEach(id => topics.deleteTopic(id))
+  const cur = topics.currentTopicId
+  chat.loadMessages(cur || '')
+  router.push(cur ? `/chat/${cur}` : '/chat')
+  exitSelectMode()
+}
 
 const assetPanel = inject('assetPanel', null)
 const skillPanel = inject('skillPanel', null)
@@ -132,16 +288,6 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('resize', checkMobile)
 })
-
-const filteredTopics = computed(() => {
-  const q = searchQuery.value.trim().toLowerCase()
-  if (!q) return topics.sortedTopics
-  return topics.sortedTopics.filter(t => t.title.toLowerCase().includes(q))
-})
-
-function onSearch() {
-  highlightId.value = null
-}
 
 function fmtTime(ts) {
   const d = new Date(ts)
@@ -179,22 +325,14 @@ async function handleDelete(id) {
   }
 }
 
-// 长按/右键置顶
+// 长按菜单（移动端）
 let topicLongTimer = null
-function onTopicCtx(id, e) {
-  const topic = topics.topics.find(t => t.id === id)
-  if (!topic) return
-  window.__ui?.showMenu(e.clientX, e.clientY, [
-    { label: topic.pinned ? '取消置顶' : '置顶', action: () => topics.togglePin(id) },
-  ])
-}
+let longPressed = false
 function onTopicTouchStart(id, e) {
+  if (selectMode.value) return
   topicLongTimer = setTimeout(() => {
-    const topic = topics.topics.find(t => t.id === id)
-    if (!topic) return
-    window.__ui?.showMenu(e.touches[0].clientX, e.touches[0].clientY, [
-      { label: topic.pinned ? '取消置顶' : '置顶', action: () => topics.togglePin(id) },
-    ])
+    longPressed = true
+    openCtx(id, e.touches[0].clientX, e.touches[0].clientY)
   }, 600)
 }
 function onTopicTouchEnd() { clearTimeout(topicLongTimer) }
@@ -222,38 +360,40 @@ function onSidebarTouchEnd(e) {
 
 .sidebar { width: 260px; min-width: 260px; height: 100%; background: var(--bg-sidebar); display: flex; flex-direction: column; border-right: 1px solid var(--border-color); }
 
-/* 搜索 */
-.sidebar-search { display: flex; align-items: center; gap: 6px; margin: 10px 12px 8px; padding: 8px 10px; background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 8px; }
-.search-icon { flex-shrink: 0; color: var(--text-muted); }
-.search-input { flex: 1; border: none; background: transparent; color: var(--text-primary); font-size: 12px; outline: none; font-family: inherit; }
-.search-input::placeholder { color: var(--text-muted); }
-
 /* 快捷入口 */
-.sidebar-nav { display: flex; flex-direction: column; gap: 2px; padding: 0 12px 8px; }
+.sidebar-nav { display: flex; flex-direction: column; gap: 2px; padding: 12px 12px 8px; }
 .nav-btn { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: none; border-radius: 8px; background: transparent; color: var(--text-primary); cursor: pointer; font-size: 13px; font-family: inherit; transition: background 0.15s; }
 .nav-btn span { flex: 1; text-align: left; }
 .nav-btn:hover { background: var(--bg-hover); }
 .nav-btn:active { background: var(--bg-active); }
 
-/* 历史对话标题 */
-.topic-list-header { padding: 8px 16px 4px; font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
-
+/* 历史对话分组 */
 .topic-list { flex: 1; overflow-y: auto; overscroll-behavior: none; padding: 4px 8px 8px; }
 .empty-hint { text-align: center; padding: 24px; color: var(--text-muted); font-size: 12px; }
+.group-title { padding: 6px 8px 4px; font-size: 11px; font-weight: 600; color: var(--text-muted); letter-spacing: 0.5px; }
+.group-divider { height: 1px; margin: 6px 4px; background: var(--border-color); }
 
 .topic-item { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-radius: 8px; cursor: pointer; transition: all 0.15s; margin-bottom: 1px; }
 .topic-item:hover { background: var(--bg-hover); }
 .topic-item.active { background: var(--bg-active); }
-.topic-item.highlight { background: var(--accent-light); }
+.topic-item.selected { background: var(--bg-hover); }
 
 .topic-icon { flex-shrink: 0; color: var(--text-muted); }
 .topic-icon.pin { color: var(--accent); }
 .topic-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .topic-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text-primary); line-height: 1.4; }
 .topic-time { font-size: 10px; color: var(--text-muted); line-height: 1.2; }
-.btn-delete { flex-shrink: 0; width: 24px; height: 24px; border: none; border-radius: 4px; background: transparent; color: var(--text-muted); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
-.topic-item:hover .btn-delete { opacity: 1; }
-.btn-delete:hover { background: var(--danger-bg); color: var(--danger); }
+
+.topic-check { width: 16px; height: 16px; flex-shrink: 0; border: 1px solid var(--border-color); border-radius: 4px; display: flex; align-items: center; justify-content: center; color: #fff; transition: all 0.15s; }
+.topic-check.on { background: var(--accent); border-color: var(--accent); }
+
+/* 多选操作栏 */
+.select-bar { display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-top: 1px solid var(--border-color); flex-shrink: 0; }
+.select-count { flex: 1; font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+.select-btn { padding: 5px 10px; border: none; border-radius: 6px; background: var(--bg-hover); color: var(--text-secondary); font-size: 12px; font-family: inherit; cursor: pointer; }
+.select-btn:hover { color: var(--text-primary); }
+.select-btn.danger { color: var(--danger); background: var(--danger-bg); }
+.select-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* 底部用户栏 */
 .sidebar-footer { display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-top: 1px solid var(--border-color); flex-shrink: 0; }
@@ -274,6 +414,26 @@ function onSidebarTouchEnd(e) {
 }
 .sidebar-wrapper.collapsed ~ .btn-toggle { left: 8px; }
 .btn-toggle:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+/* 对话条目右键 / 长按菜单 */
+.ctx-overlay { position: fixed; inset: 0; z-index: 2000; }
+.ctx-menu { position: fixed; z-index: 2001; min-width: 168px; padding: 6px; background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); }
+.ctx-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 12px; border: none; border-radius: 8px; background: transparent; color: var(--text-primary); font-size: 13px; font-family: inherit; text-align: left; cursor: pointer; }
+.ctx-item span { flex: 1; }
+.ctx-item:hover { background: var(--bg-hover); }
+.ctx-item.danger { color: var(--danger); }
+.ctx-item.danger:hover { background: var(--danger-bg); }
+
+/* 重命名对话框 */
+.rename-overlay { position: fixed; inset: 0; z-index: 2000; background: rgba(0,0,0,0.45); display: flex; align-items: center; justify-content: center; }
+.rename-box { width: 90%; max-width: 320px; padding: 20px; border-radius: 14px; background: var(--bg-primary); box-shadow: 0 8px 32px rgba(0,0,0,0.18); }
+.rename-title { font-size: 14px; font-weight: 600; color: var(--text-primary); margin-bottom: 12px; }
+.rename-input { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-card); color: var(--text-primary); font-size: 13px; font-family: inherit; outline: none; }
+.rename-input:focus { border-color: var(--accent); }
+.rename-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
+.rename-btn { padding: 7px 18px; border: none; border-radius: 8px; font-size: 13px; font-family: inherit; cursor: pointer; }
+.rename-btn.cancel { background: var(--bg-hover); color: var(--text-secondary); }
+.rename-btn.confirm { background: var(--accent); color: #fff; }
 
 @media (max-width: 768px) {
   .sidebar-wrapper { position: fixed; inset: 0; width: 100%; min-width: 0; z-index: 100; pointer-events: none; }
