@@ -3,9 +3,10 @@
     <div class="messages-container">
       <MessageItem
         v-for="(msg, idx) in messages"
-        :key="idx"
+        :key="msg.id || idx"
         :message="msg"
         :index="idx"
+        :highlight="msg.id === highlightId"
         :is-last-ai="msg.role === 'assistant' && idx === messages.length - 1 && !streamingContent && !streamingThinking && !isLoading"
       />
       <!-- 流式生成中的临时消息 -->
@@ -60,6 +61,7 @@ const props = defineProps({
   streamingContent: { type: String, default: '' },
   streamingThinking: { type: String, default: '' },
   isLoading: { type: Boolean, default: false },
+  highlightId: { type: String, default: '' },
 })
 
 const emit = defineEmits(['away-from-bottom'])
@@ -81,6 +83,20 @@ function scrollToTop() {
   }
 }
 
+// 定位到指定消息（搜索跳转）
+function scrollToMessage(messageId) {
+  if (!messageId) return
+  nextTick(() => {
+    const list = listRef.value
+    const el = list?.querySelector(`[id="msg-${messageId}"]`)
+    if (!el || !list) return
+    const rect = el.getBoundingClientRect()
+    const listRect = list.getBoundingClientRect()
+    const top = list.scrollTop + (rect.top - listRect.top) - list.clientHeight / 2 + rect.height / 2
+    list.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
+  })
+}
+
 function checkScroll() {
   if (!listRef.value) return
   const el = listRef.value
@@ -100,7 +116,7 @@ watch(() => props.streamingContent, scrollToBottom)
 watch(() => props.streamingThinking, scrollToBottom)
 watch(() => props.isLoading, scrollToBottom, { immediate: true })
 
-defineExpose({ scrollToBottom, scrollToTop })
+defineExpose({ scrollToBottom, scrollToTop, scrollToMessage })
 </script>
 
 <style scoped>

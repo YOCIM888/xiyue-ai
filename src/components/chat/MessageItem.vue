@@ -1,5 +1,9 @@
 <template>
-  <div class="message-item" :class="message.role">
+  <div
+    class="message-item"
+    :class="[message.role, { highlighted: highlight }]"
+    :id="'msg-' + message.id"
+  >
     <!-- AI 头像 -->
     <div v-if="message.role === 'assistant' && !settings.hideAiAvatar" class="message-avatar">
       <img src="/xiyue.png" class="avatar-img" alt="AI" />
@@ -7,6 +11,12 @@
 
     <!-- 用户消息：删除按钮（气泡左边） -->
     <div v-if="message.role === 'user'" class="user-actions">
+      <button class="btn-action" @click="startEdit" title="编辑并重新生成">
+        <i class="fa-solid fa-pen"></i>
+      </button>
+      <button class="btn-action" @click="branchHere" title="从此处创建分支">
+        <i class="fa-solid fa-code-branch"></i>
+      </button>
       <button class="btn-action user-del" @click="confirmDelete(index)" title="删除">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
       </button>
@@ -14,6 +24,16 @@
 
     <!-- 消息气泡（AI 和用户共用） -->
     <div class="message-bubble">
+      <div v-if="hasVersions" class="version-nav">
+        <button class="ver-btn" :disabled="activeVersion <= 0" title="上一版本" @click="chatStore.setVersion(message.id, activeVersion - 1)">
+          <i class="fa-solid fa-chevron-left"></i>
+        </button>
+        <span class="ver-count">{{ activeVersion + 1 }} / {{ message.versions.length }}</span>
+        <button class="ver-btn" :disabled="activeVersion >= message.versions.length - 1" title="下一版本" @click="chatStore.setVersion(message.id, activeVersion + 1)">
+          <i class="fa-solid fa-chevron-right"></i>
+        </button>
+      </div>
+
       <div v-if="message.thinking" class="thinking-block">
         <button class="thinking-toggle" @click="thinkOpen = !thinkOpen">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline :points="thinkOpen ? '6 15 12 9 18 15' : '9 18 15 12 9 6'"/></svg>
@@ -36,7 +56,16 @@
         </div>
       </div>
 
-      <div class="message-content">
+      <div v-if="editing" class="edit-box">
+        <textarea ref="editTextarea" v-model="editText" class="edit-textarea" rows="4"></textarea>
+        <p class="edit-hint">保存后将创建新分支并重新生成 AI 回复，原消息仍保留在原分支。</p>
+        <div class="edit-actions">
+          <button class="edit-btn cancel" @click="editing = false">取消</button>
+          <button class="edit-btn save" :disabled="!editText.trim() || chatStore.isLoading" @click="saveEdit">保存并重新生成</button>
+        </div>
+      </div>
+
+      <div v-else class="message-content">
         <MarkdownRenderer :content="displayContent" :symbol-style="message.role === 'assistant'" />
       </div>
 
@@ -50,11 +79,18 @@
         <button class="btn-action" :class="{ active: speaking }" @click="toggleSpeak" title="朗读">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
         </button>
-        <button v-if="isLastAi" class="btn-action" @click="chatStore.regenerate()" title="重新生成">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+        <button
+          class="btn-action"
+          :title="isLastAi ? '重新生成（保留旧版本）' : '重新生成（后续内容保留在原分支）'"
+          @click="chatStore.regenerate(message.id)"
+        >
+          <i class="fa-solid fa-rotate-right"></i>
         </button>
         <button v-if="isLastAi" class="btn-action" @click="chatStore.continueResponse()" title="继续生成">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <button class="btn-action" @click="branchHere" title="从此处创建分支">
+          <i class="fa-solid fa-code-branch"></i>
         </button>
         <button class="btn-action danger" @click="confirmDelete(index)" title="删除">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
@@ -75,7 +111,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, nextTick } from 'vue'
 import MarkdownRenderer from '../common/MarkdownRenderer.vue'
 import { useSettingsStore } from '../../stores/settings'
 import { useChatStore } from '../../stores/chat'
@@ -89,9 +125,35 @@ const props = defineProps({
   message: { type: Object, required: true },
   index: { type: Number, required: true },
   isLastAi: { type: Boolean, default: false },
+  highlight: { type: Boolean, default: false },
 })
 
 const thinkOpen = ref(true)
+const editing = ref(false)
+const editText = ref('')
+const editTextarea = ref(null)
+
+const hasVersions = computed(() =>
+  Array.isArray(props.message.versions) && props.message.versions.length > 1
+)
+const activeVersion = computed(() => Number(props.message.activeVersion) || 0)
+
+function startEdit() {
+  editText.value = props.message.content || ''
+  editing.value = true
+  nextTick(() => editTextarea.value?.focus())
+}
+
+function saveEdit() {
+  const text = editText.value.trim()
+  if (!text || chatStore.isLoading) return
+  chatStore.editAndRegenerate(props.message.id, text)
+  editing.value = false
+}
+
+function branchHere() {
+  chatStore.branchFromMessage(props.message.id)
+}
 
 const fileBlocks = computed(() => {
   if (props.message.role !== 'user') return []
@@ -217,4 +279,100 @@ function toggleSpeak() {
   max-width: 200px; max-height: 200px; border-radius: 10px;
   object-fit: cover; border: 1px solid var(--border-color);
 }
+
+.btn-action i { font-size: 12px; }
+
+/* 回复版本切换 */
+.version-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-bottom: 6px;
+  padding: 2px 4px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--bg-sidebar);
+}
+.ver-btn {
+  width: 20px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 9px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.ver-btn:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-primary); }
+.ver-btn:disabled { opacity: 0.35; cursor: default; }
+.ver-count {
+  min-width: 32px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 编辑用户消息 */
+.edit-box { min-width: 240px; }
+.edit-textarea {
+  width: 100%;
+  min-height: 88px;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  resize: vertical;
+  outline: none;
+}
+.edit-textarea:focus { border-color: var(--accent); }
+.edit-hint {
+  margin: 6px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+.edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 8px;
+}
+.edit-btn {
+  padding: 5px 12px;
+  border-radius: 7px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.edit-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.edit-btn.save {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+.edit-btn.save:hover { opacity: 0.9; }
+.edit-btn.save:disabled { opacity: 0.5; cursor: default; }
+
+/* 搜索结果定位高亮 */
+.message-item.highlighted .message-bubble {
+  animation: msg-highlight 2s ease-out;
+}
+@keyframes msg-highlight {
+  0% { box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.45); }
+  70% { box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12); }
+  100% { box-shadow: 0 0 0 3px rgba(99, 102, 241, 0); }
+}
+
 </style>

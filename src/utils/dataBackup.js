@@ -17,7 +17,7 @@ const SETTINGS_KEY = 'ai_chat_settings'
 
 function moduleOf(key) {
   if (key === SETTINGS_KEY || key === 'system_prompt_content') return 'settings'
-  if (key === 'ai_chat_topics' || key.startsWith('chat_messages_')) return 'chat'
+  if (key === 'ai_chat_topics' || key.startsWith('chat_messages_') || key.startsWith('chat_conv_v2_')) return 'chat'
   if (key === 'xiyue_memories' || key === 'xiyue_memory_enabled') return 'memory'
   if (key === 'xiyue_starry_circle_posts') return 'circle'
   if (key === 'xiyue_dream_sessions') return 'dream'
@@ -31,6 +31,7 @@ function labelOf(key) {
   if (key === 'system_prompt_content') return '系统提示词（旧版）'
   if (key === 'ai_chat_topics') return '对话列表'
   if (key.startsWith('chat_messages_')) return `会话消息 #${key.slice('chat_messages_'.length)}`
+  if (key.startsWith('chat_conv_v2_')) return `会话（含分支） #${key.slice('chat_conv_v2_'.length)}`
   if (key === 'xiyue_memories') return '记忆列表'
   if (key === 'xiyue_memory_enabled') return '记忆开关'
   if (key === 'xiyue_starry_friends') return '好友列表'
@@ -138,11 +139,24 @@ function parseRaw(raw, fallback) {
 
 export function summarizeBackup(entries) {
   const topics = parseRaw(entries.ai_chat_topics || '[]', [])
-  const chatSessions = Object.keys(entries).filter(k => k.startsWith('chat_messages_'))
-  const chatMessages = chatSessions.reduce((sum, k) => {
-    const list = parseRaw(entries[k], [])
-    return sum + (Array.isArray(list) ? list.length : 0)
-  }, 0)
+  // 每个会话优先统计 v2（含所有分支），否则退回旧版数组，避免重复计数
+  const chatTopicIds = new Set()
+  Object.keys(entries).forEach(key => {
+    if (key.startsWith('chat_messages_')) chatTopicIds.add(key.slice('chat_messages_'.length))
+    if (key.startsWith('chat_conv_v2_')) chatTopicIds.add(key.slice('chat_conv_v2_'.length))
+  })
+  let chatMessages = 0
+  chatTopicIds.forEach(id => {
+    const conv = parseRaw(entries[`chat_conv_v2_${id}`] || 'null', null)
+    if (conv && Array.isArray(conv.branches)) {
+      conv.branches.forEach(b => {
+        if (Array.isArray(b.messages)) chatMessages += b.messages.length
+      })
+      return
+    }
+    const list = parseRaw(entries[`chat_messages_${id}`] || '[]', [])
+    if (Array.isArray(list)) chatMessages += list.length
+  })
   const friends = parseRaw(entries.xiyue_starry_friends || '[]', [])
   const groups = parseRaw(entries.xiyue_starry_groups || '[]', [])
   const starryMsgs = Object.keys(entries)
@@ -158,7 +172,7 @@ export function summarizeBackup(entries) {
 
   const parts = []
   if (Array.isArray(topics) && topics.length) parts.push(`主聊天 ${topics.length} 个对话`)
-  if (chatSessions.length) parts.push(`主聊天 ${chatMessages} 条消息`)
+  if (chatTopicIds.size) parts.push(`主聊天 ${chatMessages} 条消息`)
   if (Array.isArray(friends) && friends.length) parts.push(`星空 ${friends.length} 位好友`)
   if (Array.isArray(groups) && groups.length) parts.push(`${groups.length} 个群聊`)
   if (starryMsgs) parts.push(`星空 ${starryMsgs} 条消息`)

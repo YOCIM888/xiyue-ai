@@ -1,15 +1,18 @@
 <template>
   <div class="chat-area" :style="chatBgStyle">
     <WelcomeScreen v-if="messages.length === 0 && !chatStore.streamingContent && !chatStore.isLoading" />
-    <MessageList
-      v-else
-      ref="msgListRef"
-      :messages="messages"
-      :streamingContent="chatStore.streamingContent"
-      :streamingThinking="chatStore.streamingThinking"
-      :isLoading="chatStore.isLoading"
-      @away-from-bottom="showScrollBtn = $event"
-    />
+    <template v-else>
+      <BranchBar />
+      <MessageList
+        ref="msgListRef"
+        :messages="messages"
+        :streamingContent="chatStore.streamingContent"
+        :streamingThinking="chatStore.streamingThinking"
+        :isLoading="chatStore.isLoading"
+        :highlightId="highlightId"
+        @away-from-bottom="showScrollBtn = $event"
+      />
+    </template>
     <ChatInput
       :isLoading="chatStore.isLoading"
       @send="handleSend"
@@ -24,11 +27,12 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { useChatStore } from '../../stores/chat'
 import { useTopicsStore } from '../../stores/topics'
 import MessageList from '../chat/MessageList.vue'
+import BranchBar from '../chat/BranchBar.vue'
 import ChatInput from '../chat/ChatInput.vue'
 import WelcomeScreen from '../chat/WelcomeScreen.vue'
 import { useSettingsStore } from '../../stores/settings'
@@ -56,6 +60,22 @@ const topicId = computed(() => props.id || route.params.id)
 const messages = computed(() => chatStore.messages)
 const msgListRef = ref(null)
 const showScrollBtn = ref(false)
+const highlightId = ref('')
+let highlightTimer = null
+
+// 历史搜索跳转：?branch=<id>&msg=<messageId>
+function applyRouteQuery() {
+  const q = route.query || {}
+  if (typeof q.branch === 'string' && q.branch) {
+    chatStore.switchBranch(q.branch)
+  }
+  if (typeof q.msg === 'string' && q.msg) {
+    highlightId.value = q.msg
+    msgListRef.value?.scrollToMessage(q.msg)
+    if (highlightTimer) clearTimeout(highlightTimer)
+    highlightTimer = setTimeout(() => { highlightId.value = '' }, 2600)
+  }
+}
 
 function handleSend(data) {
   const text = typeof data === 'string' ? data : data.text
@@ -81,6 +101,7 @@ onMounted(() => {
   } else {
     chatStore.loadMessages(topicsStore.currentTopicId || '')
   }
+  applyRouteQuery()
 })
 
 watch(topicId, (newId) => {
@@ -88,6 +109,15 @@ watch(topicId, (newId) => {
     chatStore.loadMessages(newId)
     topicsStore.switchTopic(Number(newId))
   }
+  applyRouteQuery()
+})
+
+watch(() => route.query, () => {
+  nextTick(applyRouteQuery)
+})
+
+onUnmounted(() => {
+  if (highlightTimer) clearTimeout(highlightTimer)
 })
 </script>
 

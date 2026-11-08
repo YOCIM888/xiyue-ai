@@ -43,8 +43,9 @@ export const useTopicsStore = defineStore('topics', () => {
     const idx = topics.value.findIndex(t => t.id === id)
     if (idx === -1) return
     topics.value.splice(idx, 1)
-    // 清理该话题的消息
+    // 清理该话题的消息（v2 会话数据；旧键一并清掉）
     localStorage.removeItem(`chat_messages_${id}`)
+    localStorage.removeItem(`chat_conv_v2_${id}`)
     if (currentTopicId.value === id) {
       currentTopicId.value = topics.value[0]?.id ?? null
     }
