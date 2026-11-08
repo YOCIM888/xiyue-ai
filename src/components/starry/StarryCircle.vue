@@ -52,6 +52,10 @@
 
         <p class="post-content">{{ post.content }}</p>
 
+        <div v-if="post.tags?.length" class="post-tags">
+          <span v-for="tag in post.tags" :key="tag" class="post-tag">#{{ tag }}</span>
+        </div>
+
         <div class="post-actions">
           <button class="like-btn" :class="{ active: post.liked }" @click="store.toggleLike(post.id)">
             <svg width="16" height="16" viewBox="0 0 24 24" :fill="post.liked ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
@@ -110,6 +114,7 @@ import { isApiConfigured } from '../../services/starry'
 import { generateCirclePosts, generateAuthorReply } from '../../services/starryCircle'
 import ContextRing from '../common/ContextRing.vue'
 import { estimateTokens } from '../../utils/contextUsage'
+import { collectRecentChatSeeds } from '../../utils/circleSeeds'
 
 const store = useStarryCircleStore()
 const starry = useStarryStore()
@@ -126,6 +131,7 @@ const contextUsed = computed(() => {
     .map(p => [
       `【${p.authorName}｜${p.category}】`,
       p.content,
+      ...(p.tags || []).map(t => `#${t}`),
       ...(p.comments || []).map(c => `${c.authorName}：${c.content}`),
     ].join('\n'))
     .join('\n\n')
@@ -169,10 +175,13 @@ async function refresh() {
   store.setRefreshing(true)
   try {
     const count = 2 + Math.floor(Math.random() * 2)
+    const seeds = collectRecentChatSeeds()
     const posts = await generateCirclePosts({
       friends: starry.friends,
       settings,
       count,
+      seeds,
+      existingPosts: store.posts,
     })
     store.addPosts(posts)
     if (feedEl.value) feedEl.value.scrollTop = 0
@@ -450,6 +459,20 @@ async function submitComment(post) {
   color: var(--text-primary);
   white-space: pre-wrap;
   word-break: break-word;
+}
+.post-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.post-tag {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-sidebar);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
 }
 .post-actions {
   display: flex;

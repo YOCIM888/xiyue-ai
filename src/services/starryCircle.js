@@ -1,4 +1,5 @@
 import { sendChatRequest } from './api'
+import { isDuplicatePost, summarizePost } from '../utils/circleSeeds'
 
 const CATEGORIES = [
   '日常', '生活', '艺术', '哲学', '科技', '生物学', '电子',
@@ -59,11 +60,29 @@ function normalizeComment(raw, friends, authorId) {
   }
 }
 
+function normalizeTags(raw, category) {
+  const list = Array.isArray(raw)
+    ? raw
+    : typeof raw === 'string'
+      ? raw.split(/[,，、#\s]+/)
+      : []
+  const tags = []
+  for (const item of list) {
+    const tag = String(item || '').replace(/^#+/, '').replace(/#+$/, '').trim().slice(0, 8)
+    if (!tag || tags.includes(tag)) continue
+    tags.push(tag)
+    if (tags.length >= 4) break
+  }
+  if (!tags.length && category) tags.push(String(category).slice(0, 8))
+  return tags
+}
+
 function normalizePost(raw, friends, index) {
   const content = String(raw?.content || '').trim()
   if (!content) return null
 
   const author = resolveFriend(friends, raw?.author)
+  const category = String(raw?.category || CATEGORIES[Math.floor(Math.random() * CATEGORIES.length)])
   const others = friends.filter(f => f.id !== author.id)
   const rawComments = Array.isArray(raw?.comments) ? raw.comments : []
   const comments = rawComments
@@ -89,8 +108,9 @@ function normalizePost(raw, friends, index) {
     id: makeId('post'),
     authorId: author.id,
     authorName: author.name,
-    category: String(raw?.category || CATEGORIES[Math.floor(Math.random() * CATEGORIES.length)]),
+    category,
     content: content.slice(0, 1500),
+    tags: normalizeTags(raw?.tags, category),
     comments,
     likes: 2 + Math.floor(Math.random() * 26),
     liked: false,
@@ -99,30 +119,68 @@ function normalizePost(raw, friends, index) {
 }
 
 /**
- * 生成圈子动态（好友口吻，含自动评论）
+ * 构建圈子动态生成提示词（含话题种子、已有话题规避与标签要求）
  */
-export async function generateCirclePosts({ friends = [], settings, count = 3 }) {
-  if (!friends.length) throw new Error('还没有好友，无法生成动态')
+function buildSystemPrompt({ profiles, categoryHint, seeds, avoidSummaries, count }) {
+  const parts = [
+    `你是「探索星空」社交圈子的内容引擎。请以好友们的第一人称视角，生成 ${count} 条自然、真实、有生活气息的动态。`,
+    '',
+    '好友资料：',
+    profiles,
+    '',
+  ]
 
+  if (seeds.length) {
+    parts.push(
+      '用户近期真实关注点（话题种子，来自真实聊天；可自然融入 1-2 条动态，不要生硬罗列）：',
+      seeds.join('、'),
+      ''
+    )
+  }
+
+  if (avoidSummaries.length) {
+    parts.push(
+      '以下话题已经发布过，必须避开，不要换汤不换药地重复同一主题：',
+      ...avoidSummaries.map(item => `- ${item}`),
+      ''
+    )
+  }
+
+  parts.push(
+    '要求：',
+    '1. 每条动态由一位不同好友发布，作者只能是上面列出的好友之一。',
+    `2. 话题从这些类别中挑选：${categoryHint}。内容 30-90 字，像真实社交动态，不要像作文或营销文案。`,
+    '3. 每条动态附带 2-3 条其他好友的评论，评论 10-40 字，符合评论者性格，不要复读原文。',
+    '4. 同一批动态之间也必须是不同话题，不能只是换措辞。',
+    '5. 每条动态给出 2-4 个话题标签 tags（2-4 个字，不带 #），标签要具体，便于区分话题。',
+    '6. 可以用少量表情，但不要堆砌。',
+    '7. 严格输出 JSON 数组，不要输出解释、markdown 代码块或多余文字。',
+    '',
+    'JSON 结构：',
+    '[{"author":"好友姓名","category":"类别","content":"动态正文","tags":["话题标签"],"comments":[{"author":"评论好友姓名","content":"评论内容"}]}]'
+  )
+
+  return parts.join('\n')
+}
+
+async function requestCirclePosts({
+  friends,
+  settings,
+  count,
+  seeds,
+  avoidSummaries,
+  categoryHint,
+}) {
   const profiles = friends
     .map(f => `- ${f.name}：${String(f.persona || '').slice(0, 200)}`)
     .join('\n')
-  const categoryHint = pick(CATEGORIES, 6).join('、')
-
-  const systemPrompt = `你是「探索星空」社交圈子的内容引擎。请以好友们的第一人称视角，生成 ${count} 条自然、真实、有生活气息的动态。
-
-好友资料：
-${profiles}
-
-要求：
-1. 每条动态由一位不同好友发布，作者只能是上面列出的好友之一。
-2. 话题从这些类别中挑选：${categoryHint}。内容 30-90 字，像真实社交动态，不要像作文或营销文案。
-3. 每条动态附带 2-3 条其他好友的评论，评论 10-40 字，符合评论者性格，不要复读原文。
-4. 可以用少量表情，但不要堆砌。
-5. 严格输出 JSON 数组，不要输出解释、markdown 代码块或多余文字。
-
-JSON 结构：
-[{"author":"好友姓名","category":"类别","content":"动态正文","comments":[{"author":"评论好友姓名","content":"评论内容"}]}]`
+  const systemPrompt = buildSystemPrompt({
+    profiles,
+    categoryHint,
+    seeds,
+    avoidSummaries,
+    count,
+  })
 
   let output = ''
   await sendChatRequest({
@@ -143,13 +201,71 @@ JSON 结构：
   })
 
   const parsed = extractJSON(output)
-  const posts = parsed
+  return parsed
     .map((item, index) => normalizePost(item, friends, index))
     .filter(Boolean)
-    .slice(0, count)
+}
 
-  if (!posts.length) throw new Error('生成结果为空，请重试')
-  return posts
+/**
+ * 生成圈子动态（好友口吻，含自动评论）
+ * - seeds: 来自用户最近聊天的关键词
+ * - existingPosts: 已有动态，用于提示避开与本地查重
+ */
+export async function generateCirclePosts({
+  friends = [],
+  settings,
+  count = 3,
+  seeds = [],
+  existingPosts = [],
+}) {
+  if (!friends.length) throw new Error('还没有好友，无法生成动态')
+
+  const categoryHint = pick(CATEGORIES, 6).join('、')
+  const accepted = []
+  const rejected = []
+  let sawCandidate = false
+  const maxAttempts = 2
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const need = count - accepted.length
+    if (need <= 0) break
+
+    const knownPosts = [...existingPosts, ...accepted, ...rejected]
+    const avoidSummaries = knownPosts.slice(0, 28).map(post => summarizePost(post))
+
+    let batch = []
+    try {
+      batch = await requestCirclePosts({
+        friends,
+        settings,
+        count: need,
+        seeds,
+        avoidSummaries,
+        categoryHint,
+      })
+    } catch (err) {
+      if (accepted.length) break
+      throw err
+    }
+
+    for (const post of batch) {
+      if (accepted.length >= count) break
+      sawCandidate = true
+      if (isDuplicatePost(post, [...existingPosts, ...accepted, ...rejected])) {
+        rejected.push(post)
+        continue
+      }
+      accepted.push(post)
+    }
+
+    // 已经拿到新内容就不再额外请求；整批撞题时才重试一次
+    if (accepted.length) break
+  }
+
+  if (!accepted.length) {
+    throw new Error(sawCandidate ? '生成的动态与已有内容重复，请稍后重试' : '生成结果为空，请重试')
+  }
+  return accepted
 }
 
 /**
