@@ -137,6 +137,7 @@
                 {{ settings.secondaryReady ? '已配置' : '未配置' }}
               </span>
             </div>
+            <p class="hint">主模型不支持视觉或失败时，图片理解自动交给副模型；AI 生图也由副模型负责。</p>
 
             <div class="preset-grid">
               <button

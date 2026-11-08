@@ -106,8 +106,11 @@
           </div>
 
           <p v-if="settings.ocrSkillEnabled" class="skill-hint" :class="{ warn: !settings.secondaryReady && visionStatus === 'text' }">
-            <template v-if="settings.secondaryReady">
-              图片理解将使用副模型「{{ settings.secondaryModel }}」，由视觉模型读取图片中的文字与关键内容。
+            <template v-if="visionStatus === 'vision'">
+              图片将优先交给主模型「{{ settings.model }}」读取。<template v-if="settings.secondaryReady">主模型无法识别或请求失败时，自动切换到副模型「{{ settings.secondaryModel }}」。</template>
+            </template>
+            <template v-else-if="settings.secondaryReady">
+              主模型「{{ settings.model }}」{{ visionStatusText }}，图片将由副模型「{{ settings.secondaryModel }}」读取。<template v-if="visionStatus === 'unknown'">若主模型能处理图片，会优先使用主模型。</template>
             </template>
             <template v-else>
               未配置副模型，将使用主模型「{{ settings.model }}」（{{ visionStatusText }}）。可在 设置 → 模型设置 → 副模型 API 配置视觉模型。

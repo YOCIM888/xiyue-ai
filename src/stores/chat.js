@@ -102,18 +102,17 @@ export const useChatStore = defineStore('chat', () => {
     const lastUser = [...history].reverse().find(m => m.role === 'user')
     const hasImages = Array.isArray(lastUser?.images) && lastUser.images.length > 0
 
-    // 副模型已配置时，带图片的请求交给副模型（多模态）；否则沿用主模型
-    const useSecondary = ocrEnabled && hasImages && !!settings.secondaryReady
-    const activeApiBase = useSecondary ? settings.secondaryApiBase : settings.apiBase
-    const activeApiKey = useSecondary ? settings.secondaryApiKey : settings.apiKey
-    const activeModel = useSecondary ? settings.secondaryModel : settings.model
+    const visionSupport = detectVisionSupport(settings.model, settings.apiBase, settings.modelVisionMode)
+    const hasSecondary = !!settings.secondaryReady
+    // 主模型明确为纯文本时才让副模型先接手；手动/自动判定支持视觉或能力未知时，主模型优先
+    const preferMainVision = visionSupport !== 'text'
+    const useSecondary = ocrEnabled && hasImages && !preferMainVision && hasSecondary
 
     // 没有副模型，且主模型明确是纯文本：直接提示，不发起请求
-    if (ocrEnabled && hasImages && !useSecondary &&
-      detectVisionSupport(settings.model, settings.apiBase, settings.modelVisionMode) === 'text') {
+    if (ocrEnabled && hasImages && !preferMainVision && !hasSecondary) {
       return {
         content: `⚠️ 当前主模型「${settings.model}」是纯文本模型，无法读取图片。\n\n` +
-          `图片理解 / OCR 需要视觉模型。请在「设置 → 模型设置 → 副模型 API」中配置智谱 GLM-4.6V（或其他视觉模型）后再发图。\n` +
+          `图片理解 / OCR 需要视觉模型。请在「设置 → 模型设置 → 副模型 API」中配置一个视觉模型后再发图。\n` +
           `主对话仍可正常使用，不受影响。\n\n` +
           `提示：这不是本地 OCR，应用不会在设备上识别文字。`,
       }
@@ -126,6 +125,9 @@ export const useChatStore = defineStore('chat', () => {
     let fullContent = ''
     let fullThinking = ''
     let imageNotice = ''
+    let attemptedModel = useSecondary ? settings.secondaryModel : settings.model
+    let attemptedSecondary = useSecondary
+    let fellBackToSecondary = false
     try {
       const controller = new AbortController()
       abortController.value = controller
@@ -167,29 +169,71 @@ export const useChatStore = defineStore('chat', () => {
         apiMessages = appendContextToLastUser(apiMessages, OCR_INSTRUCTION)
       }
 
-      await sendChatRequest({
-        apiBase: activeApiBase,
-        apiKey: activeApiKey,
-        model: activeModel,
-        temperature: settings.temperature,
-        maxTokens: settings.maxTokens,
-        contextLength: settings.contextLength,
-        topP: settings.topP,
-        thinkingEnabled: settings.thinkingEnabled,
-        messages: apiMessages,
-        signal: controller.signal,
-        onChunk: ({ type, text }) => {
-          if (type === 'thinking') {
-            fullThinking += text
-            streamingThinking.value = fullThinking
-          } else {
-            fullContent += text
-            streamingContent.value = fullContent
-          }
-        },
+      // 每次尝试前清空流式内容，避免上一次失败的半截输出混进结果
+      const requestChat = async ({ apiBase, apiKey, model, secondary }) => {
+        attemptedModel = model
+        attemptedSecondary = secondary
+        fullContent = ''
+        fullThinking = ''
+        streamingContent.value = ''
+        streamingThinking.value = ''
+        await sendChatRequest({
+          apiBase,
+          apiKey,
+          model,
+          temperature: settings.temperature,
+          maxTokens: settings.maxTokens,
+          contextLength: settings.contextLength,
+          topP: settings.topP,
+          thinkingEnabled: settings.thinkingEnabled,
+          messages: apiMessages,
+          signal: controller.signal,
+          onChunk: ({ type, text }) => {
+            if (type === 'thinking') {
+              fullThinking += text
+              streamingThinking.value = fullThinking
+            } else {
+              fullContent += text
+              streamingContent.value = fullContent
+            }
+          },
+        })
+      }
+
+      const askMain = () => requestChat({
+        apiBase: settings.apiBase,
+        apiKey: settings.apiKey,
+        model: settings.model,
+        secondary: false,
+      })
+      const askSecondary = () => requestChat({
+        apiBase: settings.secondaryApiBase,
+        apiKey: settings.secondaryApiKey,
+        model: settings.secondaryModel,
+        secondary: true,
       })
 
-      const content = imageNotice ? `> ${imageNotice}\n\n${fullContent}` : fullContent
+      if (ocrEnabled && hasImages && preferMainVision) {
+        // 主模型优先处理图片；无法识别或请求失败时才自动切到副模型
+        try {
+          await askMain()
+        } catch (err) {
+          if (err?.name === 'AbortError' || !hasSecondary) throw err
+          fellBackToSecondary = true
+          await askSecondary()
+        }
+      } else if (useSecondary) {
+        await askSecondary()
+      } else {
+        await askMain()
+      }
+
+      const notices = []
+      if (imageNotice) notices.push(imageNotice)
+      if (fellBackToSecondary) {
+        notices.push(`主模型「${settings.model}」未能处理图片，已自动切换到副模型「${settings.secondaryModel}」。`)
+      }
+      const content = notices.length ? `> ${notices.join('\n> ')}\n\n${fullContent}` : fullContent
       return { content, thinking: fullThinking || undefined }
     } catch (err) {
       if (err.name === 'AbortError') {
@@ -200,18 +244,28 @@ export const useChatStore = defineStore('chat', () => {
       }
       const message = String(err?.message || err || '')
       if (ocrEnabled && hasImages && isVisionUnsupportedError(message)) {
+        if (fellBackToSecondary) {
+          return {
+            content: `⚠️ 图片理解失败：主模型「${settings.model}」和副模型「${settings.secondaryModel}」都无法读取这张图片。\n\n` +
+              `接口返回：${message}\n\n` +
+              `建议把「设置 → 模型设置 → 模型图片能力」设为「纯文本」，并检查副模型是否为视觉模型（如 glm-4.6v / glm-4.6v-flash）。`,
+          }
+        }
         return {
-          content: useSecondary
-            ? `⚠️ 图片理解失败：副模型「${activeModel}」似乎不支持图片输入。\n\n` +
+          content: attemptedSecondary
+            ? `⚠️ 图片理解失败：副模型「${attemptedModel}」似乎不支持图片输入。\n\n` +
               `接口返回：${message}\n\n` +
               `请在「设置 → 模型设置 → 副模型 API」换成视觉模型（如 glm-4.6v / glm-4.6v-flash）后重试。`
-            : `⚠️ 图片理解失败：当前模型「${activeModel}」似乎不支持图片输入。\n\n` +
+            : `⚠️ 图片理解失败：当前模型「${attemptedModel}」似乎不支持图片输入。\n\n` +
               `接口返回：${message}\n\n` +
               `可以：1) 在「设置 → 模型设置 → 副模型 API」配置视觉模型；2) 或先把图片里的文字复制成文本再发送。\n\n` +
               `提示：图片理解依赖模型视觉能力，不是本地 OCR。`,
         }
       }
-      return { content: `❌ 错误: ${message}` }
+      const failedNote = fellBackToSecondary
+        ? `主模型失败后已尝试副模型，副模型仍失败。\n\n`
+        : ''
+      return { content: `❌ 错误: ${failedNote}${message}` }
     } finally {
       isLoading.value = false
       streamingContent.value = ''
