@@ -56,14 +56,6 @@
               </div>
               <input ref="fileInput" type="file" accept="image/*" style="display:none" @change="onFileChange" />
             </div>
-            <!-- TTS 音色 -->
-            <div class="field">
-              <label>朗读音色</label>
-              <select v-model="settings.ttsVoice" class="voice-select" @focus="loadVoices">
-                <option value="">默认音色</option>
-                <option v-for="v in voices" :key="v.name" :value="v.name">{{ v.name }} ({{ v.lang }})</option>
-              </select>
-            </div>
           </div>
 
           <!-- 模型设置 -->
@@ -135,6 +127,55 @@
                 <button class="tier-btn" :class="{ active: settings.modelVisionMode === 'vision' }" @click="settings.modelVisionMode = 'vision'">支持图片</button>
                 <button class="tier-btn" :class="{ active: settings.modelVisionMode === 'text' }" @click="settings.modelVisionMode = 'text'">纯文本</button>
               </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="secondary-head">
+              <h3 class="sub-title">副模型 API（多模态）</h3>
+              <span class="state-badge" :class="{ on: settings.secondaryReady }">
+                {{ settings.secondaryReady ? '已配置' : '未配置' }}
+              </span>
+            </div>
+
+            <div class="preset-grid">
+              <button
+                v-for="p in settings.secondaryPresets"
+                :key="p.label"
+                class="preset-btn"
+                :class="{ active: settings.secondaryApiBase === p.base && settings.secondaryModel === p.model }"
+                @click="settings.applySecondaryPreset(p)"
+              >
+                {{ p.label }}
+              </button>
+            </div>
+
+            <div class="field secondary-first">
+              <label>Base URL</label>
+              <input v-model="settings.secondaryApiBase" type="text" placeholder="https://open.bigmodel.cn/api/paas/v4" />
+            </div>
+            <div class="field">
+              <label>视觉模型名称</label>
+              <input v-model="settings.secondaryModel" type="text" placeholder="glm-4.6v-flash" />
+            </div>
+            <div class="field">
+              <label>API Key</label>
+              <div class="password-field">
+                <input v-model="settings.secondaryApiKey" :type="showSecondaryKey ? 'text' : 'password'" placeholder="智谱 API Key" />
+                <button class="btn-toggle-pw" @click="showSecondaryKey = !showSecondaryKey">
+                  <svg v-if="!showSecondaryKey" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                  <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="field">
+              <label>生图模型</label>
+              <select v-model="settings.secondaryImageModel" class="setting-select">
+                <option value="cogview-3-flash">cogview-3-flash</option>
+                <option value="cogview-4">cogview-4</option>
+                <option value="cogview-4-250304">cogview-4-250304</option>
+                <option value="glm-image">glm-image</option>
+              </select>
             </div>
           </div>
 
@@ -373,7 +414,7 @@
             <p class="hint">导出文件包含版本号、导出时间与全部应用数据，文件名带日期，可用于备份或迁移到其他设备。</p>
             <p class="hint protect-hint">
               <i class="fa-solid fa-shield-halved"></i>
-              API Key 与搜索 Key 等敏感配置不会写入导出文件；导入时也会保留本机当前的 API Key 和 Tavily Key。
+              主模型 / 副模型 API Key 与搜索 Key 等敏感配置不会写入导出文件；导入时也会保留本机当前的主模型 Key、副模型 Key 和 Tavily Key。
             </p>
 
             <div class="divider"></div>
@@ -406,14 +447,13 @@ import {
 const settings = useSettingsStore()
 const visible = ref(false)
 const showKey = ref(false)
+const showSecondaryKey = ref(false)
 const showSearchKey = ref(false)
 const fileInput = ref(null)
 const importDataInput = ref(null)
-const voices = ref([])
-
 // 设置栏目
 const sections = [
-  { key: 'user', title: '用户信息', desc: '昵称、头像与朗读音色' },
+  { key: 'user', title: '用户信息', desc: '昵称与头像' },
   { key: 'model', title: '模型设置', desc: '模型选择与 API 配置' },
   { key: 'search', title: '搜索服务', desc: 'Tavily API Key 与搜索深度' },
   { key: 'params', title: '参数设置', desc: 'Temperature、Top P 与上下文/输出长度' },
@@ -633,18 +673,6 @@ function open(section = '') {
   visible.value = true
 }
 
-function loadVoices() {
-  const synth = window.speechSynthesis
-  if (!synth) return
-  const list = synth.getVoices()
-  if (list.length) voices.value = list.filter(v => v.lang.startsWith('zh'))
-  else {
-    // 某些浏览器需要异步加载
-    synth.onvoiceschanged = () => {
-      voices.value = synth.getVoices().filter(v => v.lang.startsWith('zh'))
-    }
-  }
-}
 function close() { visible.value = false }
 
 function triggerUpload() {
@@ -892,6 +920,28 @@ async function importAllData(e) {
   align-items: center;
   gap: 8px;
 }
+.secondary-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.secondary-head .sub-title { margin: 0; }
+.state-badge {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.state-badge.on {
+  background: var(--accent-light);
+  color: var(--accent);
+  font-weight: 600;
+}
+.secondary-first { margin-top: 12px; }
 .divider {
   height: 1px;
   background: var(--border-color);
@@ -1279,12 +1329,12 @@ input[type="range"] {
 }
 .protect-hint i { margin-top: 2px; color: var(--accent); }
 
-.voice-select {
+.setting-select {
   width: 100%; padding: 9px 12px; border: 1px solid var(--border-color); border-radius: 8px;
   background: var(--bg-input); color: var(--text-primary); font-size: 13px;
   outline: none; font-family: inherit; box-sizing: border-box;
 }
-.voice-select:focus { border-color: var(--accent); }
+.setting-select:focus { border-color: var(--accent); }
 
 .btn-primary {
   padding: 12px 24px;

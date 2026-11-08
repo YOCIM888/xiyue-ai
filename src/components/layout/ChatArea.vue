@@ -9,6 +9,8 @@
         :streamingContent="chatStore.streamingContent"
         :streamingThinking="chatStore.streamingThinking"
         :isLoading="chatStore.isLoading"
+        :searching="chatStore.searching"
+        :imageGenerating="chatStore.imageGenerating"
         :highlightId="highlightId"
         @away-from-bottom="showScrollBtn = $event"
       />

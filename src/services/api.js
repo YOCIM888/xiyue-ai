@@ -40,9 +40,16 @@ export async function sendChatRequest({
 
 /** OpenAI 兼容格式 (SSE) */
 async function openaiChat({ apiBase, apiKey, model, temperature, maxTokens, topP, messages, signal, onChunk, thinkingEnabled }) {
-  const url = `${apiBase.replace(/\/+$/, '')}/chat/completions`
+  const url = chatCompletionsUrl(apiBase)
+  const isBigModel = /open\.bigmodel\.cn|api\.z\.ai/i.test(String(apiBase || ''))
+  // 智谱参数范围与 OpenAI 不同：temperature 0~1，max_tokens 上限 128K
+  const safeTemperature = isBigModel ? Math.max(0, Math.min(temperature ?? 1, 1)) : temperature
+  const safeMaxTokens = isBigModel
+    ? Math.max(1, Math.min(maxTokens || 4096, 131072))
+    : Math.max(1, Math.min(maxTokens || 4096, 393216))
+  const safeTopP = isBigModel ? Math.max(0.01, Math.min(topP ?? 0.95, 1)) : topP
 
-  const body = { model, messages, temperature, max_tokens: Math.max(1, Math.min(maxTokens || 4096, 393216)), top_p: topP, stream: true }
+  const body = { model, messages, temperature: safeTemperature, max_tokens: safeMaxTokens, top_p: safeTopP, stream: true }
   if (model.startsWith('deepseek') || apiBase.includes('deepseek')) {
     body.thinking = { type: thinkingEnabled ? 'enabled' : 'disabled' }
   }
@@ -177,6 +184,17 @@ async function ollamaChat({ apiBase, model, temperature, maxTokens, contextLengt
       } catch { /* skip */ }
     }
   }
+}
+
+/**
+ * 对话补全地址。
+ * 智谱 open.bigmodel.cn 的 /chat/completions 在浏览器预检时缺少 CORS 头，
+ * 加尾斜杠会走另一条网关路由，可正常跨域；其余服务保持标准路径。
+ */
+function chatCompletionsUrl(apiBase) {
+  const base = String(apiBase || '').replace(/\/+$/, '')
+  if (/open\.bigmodel\.cn/i.test(base)) return `${base}/chat/completions/`
+  return `${base}/chat/completions`
 }
 
 async function errFromResp(resp) {

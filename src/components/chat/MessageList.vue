@@ -9,6 +9,32 @@
         :highlight="msg.id === highlightId"
         :is-last-ai="msg.role === 'assistant' && idx === messages.length - 1 && !streamingContent && !streamingThinking && !isLoading"
       />
+      <!-- 联网搜索中的 AI 气泡 -->
+      <div v-if="searching" class="message assistant">
+        <div v-if="!settings.hideAiAvatar" class="message-avatar">
+          <img src="/xiyue.png" class="avatar-img" alt="AI" />
+        </div>
+        <div class="message-bubble">
+          <div class="searching-line">
+            <span>正在联网搜索…</span>
+            <span class="searching-dots"><i></i><i></i><i></i></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 生图进行中的 AI 气泡 -->
+      <div v-if="imageGenerating" class="message assistant">
+        <div v-if="!settings.hideAiAvatar" class="message-avatar">
+          <img src="/xiyue.png" class="avatar-img" alt="AI" />
+        </div>
+        <div class="message-bubble">
+          <div class="searching-line">
+            <span>正在生成图片…</span>
+            <span class="searching-dots"><i></i><i></i><i></i></span>
+          </div>
+        </div>
+      </div>
+
       <!-- 流式生成中的临时消息 -->
       <div v-if="streamingContent || streamingThinking" class="message assistant">
         <div v-if="!settings.hideAiAvatar" class="message-avatar">
@@ -61,6 +87,8 @@ const props = defineProps({
   streamingContent: { type: String, default: '' },
   streamingThinking: { type: String, default: '' },
   isLoading: { type: Boolean, default: false },
+  searching: { type: Boolean, default: false },
+  imageGenerating: { type: Boolean, default: false },
   highlightId: { type: String, default: '' },
 })
 
@@ -114,6 +142,8 @@ onUnmounted(() => {
 watch(() => props.messages.length, scrollToBottom)
 watch(() => props.streamingContent, scrollToBottom)
 watch(() => props.streamingThinking, scrollToBottom)
+watch(() => props.searching, scrollToBottom)
+watch(() => props.imageGenerating, scrollToBottom)
 watch(() => props.isLoading, scrollToBottom, { immediate: true })
 
 defineExpose({ scrollToBottom, scrollToTop, scrollToMessage })
@@ -160,7 +190,8 @@ defineExpose({ scrollToBottom, scrollToTop, scrollToMessage })
 }
 
 .message-bubble {
-  max-width: 75%;
+  flex: 1;
+  max-width: 100%;
   min-width: 0;
   line-height: 1.7;
   font-size: 14px;
@@ -175,6 +206,30 @@ defineExpose({ scrollToBottom, scrollToTop, scrollToMessage })
 @keyframes blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }
+}
+
+/* 联网搜索提示 */
+.searching-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+.searching-dots { display: inline-flex; gap: 4px; }
+.searching-dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  animation: searching-bounce 1.2s infinite ease-in-out both;
+}
+.searching-dots i:nth-child(2) { animation-delay: 0.15s; }
+.searching-dots i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes searching-bounce {
+  0%, 80%, 100% { opacity: 0.35; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-3px); }
 }
 
 .typing-indicator {

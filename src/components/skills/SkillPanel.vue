@@ -35,7 +35,7 @@
             <div class="skill-info">
               <div class="skill-name">
                 文档解析
-                <span class="skill-tag muted">默认关闭</span>
+                <span class="skill-tag muted">默认</span>
               </div>
               <div class="skill-desc">从「我的文档」选择文件，读取正文后作为上下文提供给 AI</div>
             </div>
@@ -52,7 +52,7 @@
             <div class="skill-info">
               <div class="skill-name">
                 图片理解 / OCR
-                <span class="skill-tag muted">默认关闭</span>
+                <span class="skill-tag muted">默认</span>
               </div>
               <div class="skill-desc">把图片交给视觉模型读字并概括关键内容，不是本地 OCR</div>
             </div>
@@ -64,12 +64,29 @@
 
           <div class="skill-card">
             <div class="skill-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 3l1.2 3.4 3.4 1.2-3.4 1.2L10 12.2l-1.2-3.4L5.4 7.6l3.4-1.2L10 3z"/><path d="M17.5 12l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9.9-2.6z"/></svg>
+            </div>
+            <div class="skill-info">
+              <div class="skill-name">
+                AI 生图
+                <span class="skill-tag muted">默认</span>
+              </div>
+              <div class="skill-desc">根据你的描述调用副模型生成图片</div>
+            </div>
+            <label class="switch" :title="settings.imageGenSkillEnabled ? '点击关闭' : '点击开启'">
+              <input v-model="settings.imageGenSkillEnabled" type="checkbox" />
+              <span class="switch-track"><span class="switch-thumb"></span></span>
+            </label>
+          </div>
+
+          <div class="skill-card">
+            <div class="skill-icon">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             </div>
             <div class="skill-info">
               <div class="skill-name">
                 联网搜索
-                <span class="skill-tag muted">默认关闭</span>
+                <span class="skill-tag muted">默认</span>
               </div>
               <div class="skill-desc">识别明确搜索意图，用 Tavily 检索最新信息并附带来源链接</div>
             </div>
@@ -88,8 +105,22 @@
             <div class="skill-option-hint">1–10 条，默认 5 条；条数越多占用上下文越多。</div>
           </div>
 
-          <p v-if="settings.ocrSkillEnabled" class="skill-hint" :class="{ warn: visionStatus === 'text' }">
-            当前模型「{{ settings.model }}」{{ visionStatusText }}。可在 设置 → 模型设置 手动指定「模型图片能力」。
+          <p v-if="settings.ocrSkillEnabled" class="skill-hint" :class="{ warn: !settings.secondaryReady && visionStatus === 'text' }">
+            <template v-if="settings.secondaryReady">
+              图片理解将使用副模型「{{ settings.secondaryModel }}」，由视觉模型读取图片中的文字与关键内容。
+            </template>
+            <template v-else>
+              未配置副模型，将使用主模型「{{ settings.model }}」（{{ visionStatusText }}）。可在 设置 → 模型设置 → 副模型 API 配置视觉模型。
+            </template>
+          </p>
+
+          <p v-if="settings.imageGenSkillEnabled" class="skill-hint" :class="{ warn: !settings.secondaryReady }">
+            <template v-if="settings.secondaryReady">
+              使用副模型的生图模型「{{ settings.secondaryImageModel }}」生成图片。
+            </template>
+            <template v-else>
+              尚未配置副模型 API，发送生图描述时会提示去配置；主对话不受影响。
+            </template>
           </p>
         </div>
       </div>

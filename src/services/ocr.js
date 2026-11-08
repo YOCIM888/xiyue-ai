@@ -13,7 +13,7 @@ export const OCR_MAX_IMAGES = 6
 
 // 明确支持视觉的模型特征
 const VISION_MODEL_RE =
-  /(vision|vl|gpt-4o|gpt-4\.1|gpt-5|gpt-6|claude|gemini|llava|minicpm-v|janus|glm-4v|glm-4\.5v|internvl|pixtral|molmo|omni|qwen.*vl)/i
+  /(vision|vl|gpt-4o|gpt-4\.1|gpt-5|gpt-6|claude|gemini|llava|minicpm-v|janus|glm-4v|glm-4\.5v|glm-4\.6v|internvl|pixtral|molmo|omni|qwen.*vl)/i
 
 // 明确为纯文本的模型特征
 const TEXT_ONLY_MODEL_RE =

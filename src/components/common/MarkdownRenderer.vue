@@ -181,4 +181,75 @@ function onClick(e) {
 }
 .code-copy-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
 .code-copy-btn.copied { background: #10b981; color: #fff; }
+
+/* 浅色模式：代码卡片改为浅白灰底，深色模式保持原样 */
+:root:not([data-theme="dark"]) .code-block-wrapper { background: #f7f8fa; }
+:root:not([data-theme="dark"]) .code-block-header {
+  background: #eceef2;
+  border-color: #e3e5ea;
+}
+:root:not([data-theme="dark"]) .code-lang { color: #6b7280; }
+:root:not([data-theme="dark"]) .code-copy-btn { color: #6b7280; }
+:root:not([data-theme="dark"]) .code-copy-btn:hover { background: rgba(0, 0, 0, 0.06); color: #1f2328; }
+:root:not([data-theme="dark"]) .markdown-body pre {
+  background: #f7f8fa;
+  border-color: #e3e5ea;
+}
+:root:not([data-theme="dark"]) .markdown-body pre code { color: #24292e; }
+
+/* 浅色模式下的 GitHub Light 语法配色 */
+:root:not([data-theme="dark"]) .markdown-body .hljs-doctag,
+:root:not([data-theme="dark"]) .markdown-body .hljs-keyword,
+:root:not([data-theme="dark"]) .markdown-body .hljs-meta .hljs-keyword,
+:root:not([data-theme="dark"]) .markdown-body .hljs-template-tag,
+:root:not([data-theme="dark"]) .markdown-body .hljs-template-variable,
+:root:not([data-theme="dark"]) .markdown-body .hljs-type,
+:root:not([data-theme="dark"]) .markdown-body .hljs-variable.language_ {
+  color: #d73a49;
+}
+:root:not([data-theme="dark"]) .markdown-body .hljs-title,
+:root:not([data-theme="dark"]) .markdown-body .hljs-title.class_,
+:root:not([data-theme="dark"]) .markdown-body .hljs-title.class_.inherited__,
+:root:not([data-theme="dark"]) .markdown-body .hljs-title.function_ {
+  color: #6f42c1;
+}
+:root:not([data-theme="dark"]) .markdown-body .hljs-attr,
+:root:not([data-theme="dark"]) .markdown-body .hljs-attribute,
+:root:not([data-theme="dark"]) .markdown-body .hljs-literal,
+:root:not([data-theme="dark"]) .markdown-body .hljs-meta,
+:root:not([data-theme="dark"]) .markdown-body .hljs-number,
+:root:not([data-theme="dark"]) .markdown-body .hljs-operator,
+:root:not([data-theme="dark"]) .markdown-body .hljs-variable,
+:root:not([data-theme="dark"]) .markdown-body .hljs-selector-attr,
+:root:not([data-theme="dark"]) .markdown-body .hljs-selector-class,
+:root:not([data-theme="dark"]) .markdown-body .hljs-selector-id {
+  color: #005cc5;
+}
+:root:not([data-theme="dark"]) .markdown-body .hljs-regexp,
+:root:not([data-theme="dark"]) .markdown-body .hljs-string,
+:root:not([data-theme="dark"]) .markdown-body .hljs-meta .hljs-string {
+  color: #032f62;
+}
+:root:not([data-theme="dark"]) .markdown-body .hljs-built_in,
+:root:not([data-theme="dark"]) .markdown-body .hljs-symbol {
+  color: #e36209;
+}
+:root:not([data-theme="dark"]) .markdown-body .hljs-comment,
+:root:not([data-theme="dark"]) .markdown-body .hljs-code,
+:root:not([data-theme="dark"]) .markdown-body .hljs-formula {
+  color: #6a737d;
+}
+:root:not([data-theme="dark"]) .markdown-body .hljs-name,
+:root:not([data-theme="dark"]) .markdown-body .hljs-quote,
+:root:not([data-theme="dark"]) .markdown-body .hljs-selector-tag,
+:root:not([data-theme="dark"]) .markdown-body .hljs-selector-pseudo {
+  color: #22863a;
+}
+:root:not([data-theme="dark"]) .markdown-body .hljs-subst { color: #24292e; }
+:root:not([data-theme="dark"]) .markdown-body .hljs-section { color: #005cc5; font-weight: bold; }
+:root:not([data-theme="dark"]) .markdown-body .hljs-bullet { color: #735c0f; }
+:root:not([data-theme="dark"]) .markdown-body .hljs-emphasis { color: #24292e; font-style: italic; }
+:root:not([data-theme="dark"]) .markdown-body .hljs-strong { color: #24292e; font-weight: bold; }
+:root:not([data-theme="dark"]) .markdown-body .hljs-addition { color: #22863a; background-color: #f0fff4; }
+:root:not([data-theme="dark"]) .markdown-body .hljs-deletion { color: #b31d28; background-color: #ffeef0; }
 </style>

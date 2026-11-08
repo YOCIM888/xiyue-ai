@@ -12,6 +12,7 @@ import {
   searchWeb,
   buildSearchContext,
 } from '../services/webSearch'
+import { detectImageIntent, generateImage } from '../services/imageGen'
 import {
   detectVisionSupport,
   isVisionUnsupportedError,
@@ -40,6 +41,8 @@ export const useChatStore = defineStore('chat', () => {
   const streamingContent = ref('')
   const streamingThinking = ref('')
   const isLoading = ref(false)
+  const searching = ref(false)
+  const imageGenerating = ref(false)
   const abortController = ref(null)
   // 等待用户确认「要不要联网搜索」的原问题
   const pendingSearch = ref(null)
@@ -99,12 +102,19 @@ export const useChatStore = defineStore('chat', () => {
     const lastUser = [...history].reverse().find(m => m.role === 'user')
     const hasImages = Array.isArray(lastUser?.images) && lastUser.images.length > 0
 
-    // 配置里明确是纯文本模型：直接提示，不发起请求
-    if (ocrEnabled && hasImages && detectVisionSupport(settings.model, settings.apiBase, settings.modelVisionMode) === 'text') {
+    // 副模型已配置时，带图片的请求交给副模型（多模态）；否则沿用主模型
+    const useSecondary = ocrEnabled && hasImages && !!settings.secondaryReady
+    const activeApiBase = useSecondary ? settings.secondaryApiBase : settings.apiBase
+    const activeApiKey = useSecondary ? settings.secondaryApiKey : settings.apiKey
+    const activeModel = useSecondary ? settings.secondaryModel : settings.model
+
+    // 没有副模型，且主模型明确是纯文本：直接提示，不发起请求
+    if (ocrEnabled && hasImages && !useSecondary &&
+      detectVisionSupport(settings.model, settings.apiBase, settings.modelVisionMode) === 'text') {
       return {
-        content: `⚠️ 当前模型「${settings.model}」是纯文本模型，无法读取图片。\n\n` +
-          `图片理解 / OCR 需要把图片交给支持视觉的模型（如 GPT-4o、Claude、Gemini、Qwen-VL 等）。\n` +
-          `可以在「设置 → 模型设置」中切换到视觉模型，或把「模型图片能力」改为「支持图片 / 自动判断」后重试。\n\n` +
+        content: `⚠️ 当前主模型「${settings.model}」是纯文本模型，无法读取图片。\n\n` +
+          `图片理解 / OCR 需要视觉模型。请在「设置 → 模型设置 → 副模型 API」中配置智谱 GLM-4.6V（或其他视觉模型）后再发图。\n` +
+          `主对话仍可正常使用，不受影响。\n\n` +
           `提示：这不是本地 OCR，应用不会在设备上识别文字。`,
       }
     }
@@ -158,9 +168,9 @@ export const useChatStore = defineStore('chat', () => {
       }
 
       await sendChatRequest({
-        apiBase: settings.apiBase,
-        apiKey: settings.apiKey,
-        model: settings.model,
+        apiBase: activeApiBase,
+        apiKey: activeApiKey,
+        model: activeModel,
         temperature: settings.temperature,
         maxTokens: settings.maxTokens,
         contextLength: settings.contextLength,
@@ -191,10 +201,14 @@ export const useChatStore = defineStore('chat', () => {
       const message = String(err?.message || err || '')
       if (ocrEnabled && hasImages && isVisionUnsupportedError(message)) {
         return {
-          content: `⚠️ 图片理解失败：当前模型「${settings.model}」似乎不支持图片输入。\n\n` +
-            `接口返回：${message}\n\n` +
-            `可以：1) 在「设置 → 模型设置」中换用支持视觉的模型；2) 把「模型图片能力」设为「纯文本」，发图时会提前提示；3) 或先把图片里的文字复制成文本再发送。\n\n` +
-            `提示：图片理解依赖模型视觉能力，不是本地 OCR。`,
+          content: useSecondary
+            ? `⚠️ 图片理解失败：副模型「${activeModel}」似乎不支持图片输入。\n\n` +
+              `接口返回：${message}\n\n` +
+              `请在「设置 → 模型设置 → 副模型 API」换成视觉模型（如 glm-4.6v / glm-4.6v-flash）后重试。`
+            : `⚠️ 图片理解失败：当前模型「${activeModel}」似乎不支持图片输入。\n\n` +
+              `接口返回：${message}\n\n` +
+              `可以：1) 在「设置 → 模型设置 → 副模型 API」配置视觉模型；2) 或先把图片里的文字复制成文本再发送。\n\n` +
+              `提示：图片理解依赖模型视觉能力，不是本地 OCR。`,
         }
       }
       return { content: `❌ 错误: ${message}` }
@@ -243,6 +257,45 @@ export const useChatStore = defineStore('chat', () => {
     // 自动更新标题
     if (branch.messages.filter(m => m.role === 'user').length === 1) {
       topics.renameTopic(topicId, userContent.slice(0, 30) + (userContent.length > 30 ? '…' : ''))
+    }
+
+    // AI 生图技能：命中明确的生图描述时交给副模型出图，不再走普通对话
+    const imagePrompt = settings.imageGenSkillEnabled
+      ? detectImageIntent(userContent, images.length > 0)
+      : ''
+    if (imagePrompt) {
+      if (!settings.secondaryReady) {
+        branch.messages.push({
+          id: newMessageId(),
+          role: 'assistant',
+          content: '❌ 生图需要副模型 API，目前尚未配置。\n\n请在「设置 → 模型设置 → 副模型 API」填写 Base URL、API Key 与模型名（智谱可用 glm-4.6v 系列），并选择生图模型（如 glm-image）。主对话不受影响。',
+          ts: Date.now(),
+        })
+        saveMessages(topicId)
+        topics.touchTopic(topicId)
+        return
+      }
+      imageGenerating.value = true
+      try {
+        const result = await generateImage(imagePrompt, {
+          apiBase: settings.secondaryApiBase,
+          apiKey: settings.secondaryApiKey,
+          model: settings.secondaryImageModel || 'glm-image',
+        })
+        const imageSrc = result.ok ? (result.dataUrl || result.url) : ''
+        branch.messages.push({
+          id: newMessageId(),
+          role: 'assistant',
+          content: result.ok ? '已根据你的描述生成图片，点击图片可查看原图。' : `❌ ${result.message}`,
+          images: imageSrc ? [imageSrc] : undefined,
+          ts: Date.now(),
+        })
+        saveMessages(topicId)
+        topics.touchTopic(topicId)
+      } finally {
+        imageGenerating.value = false
+      }
+      return
     }
 
     if (declinedSearch) {
@@ -303,12 +356,18 @@ export const useChatStore = defineStore('chat', () => {
           return
         }
       } else {
-        window.__ui?.showToast('正在联网搜索…', 'info', 1800)
-        const result = await searchWeb(query, {
-          apiKey,
-          depth: settings.searchDepth,
-          maxResults: settings.searchMaxResults,
-        })
+        // 搜索期间用 AI 气泡提示，搜索完成后直接进入生成
+        searching.value = true
+        let result
+        try {
+          result = await searchWeb(query, {
+            apiKey,
+            depth: settings.searchDepth,
+            maxResults: settings.searchMaxResults,
+          })
+        } finally {
+          searching.value = false
+        }
 
         if (result.ok) {
           const built = buildSearchContext(query, result)
@@ -606,7 +665,7 @@ export const useChatStore = defineStore('chat', () => {
 
   return {
     conversation, branches, activeBranchId, activeBranch, messages,
-    streamingContent, streamingThinking, isLoading,
+    streamingContent, streamingThinking, isLoading, searching, imageGenerating,
     loadMessages, saveMessages, sendMessage, stopGeneration, clearMessages,
     regenerate, setVersion, branchFromMessage, editAndRegenerate, switchBranch,
     continueResponse, deleteMessage, buildSystemPrompt,

@@ -69,15 +69,18 @@
         <MarkdownRenderer :content="displayContent" :symbol-style="message.role === 'assistant'" />
       </div>
 
+      <!-- AI 生成的图片 -->
+      <div v-if="message.role === 'assistant' && message.images?.length" class="ai-images">
+        <img v-for="(img, i) in message.images" :key="i" :src="img" class="ai-img" alt="AI 生成图片"
+          loading="lazy" title="点击查看原图" @click="previewImage(img)" />
+      </div>
+
       <div class="message-actions" v-if="message.role === 'assistant'">
         <button class="btn-action" @click="copyContent" title="复制">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
         </button>
         <button class="btn-action" @click="saveToAssets" title="保存到文档">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
-        </button>
-        <button class="btn-action" :class="{ active: speaking }" @click="toggleSpeak" title="朗读">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
         </button>
         <button
           class="btn-action"
@@ -108,6 +111,13 @@
       <img v-for="(img, i) in message.images" :key="i" :src="img" class="user-img" />
     </div>
   </div>
+
+  <!-- AI 图片原图预览 -->
+  <Teleport to="body">
+    <div v-if="previewUrl" class="img-preview-overlay" @click="previewUrl = ''">
+      <img :src="previewUrl" class="img-preview" alt="AI 生成图片预览" />
+    </div>
+  </Teleport>
 </template>
 
 <script setup>
@@ -132,6 +142,7 @@ const thinkOpen = ref(true)
 const editing = ref(false)
 const editText = ref('')
 const editTextarea = ref(null)
+const previewUrl = ref('')
 
 const hasVersions = computed(() =>
   Array.isArray(props.message.versions) && props.message.versions.length > 1
@@ -181,32 +192,15 @@ function copyContent() {
   navigator.clipboard.writeText(props.message.content).catch(() => {})
 }
 
+function previewImage(url) {
+  previewUrl.value = url || ''
+}
+
 function saveToAssets() {
   const assetsStore = useAssetsStore()
   const title = 'AI 回复 ' + new Date().toLocaleString()
   assetsStore.saveFromMessage(props.message.content, title)
   window.__ui?.showToast('已保存到文档', 'success')
-}
-
-const speaking = ref(false)
-function toggleSpeak() {
-  const synth = window.speechSynthesis
-  if (!synth) { window.__ui?.showToast('浏览器不支持朗读', 'error'); return }
-  if (synth.speaking) { synth.cancel(); speaking.value = false; return }
-
-  const u = new SpeechSynthesisUtterance(props.message.content.replace(/[*_~`#>\-\[\]()|]/g, ''))
-  u.lang = 'zh-CN'
-  u.rate = 1.0
-  const voiceName = settings.ttsVoice
-  if (voiceName) {
-    const voices = synth.getVoices()
-    const v = voices.find(x => x.name === voiceName)
-    if (v) u.voice = v
-  }
-  u.onend = () => { speaking.value = false }
-  u.onerror = () => { speaking.value = false }
-  speaking.value = true
-  synth.speak(u)
 }
 </script>
 
@@ -225,8 +219,9 @@ function toggleSpeak() {
 .user-avatar { background: var(--accent-light); color: var(--accent); }
 .avatar-img { width: 100%; height: 100%; object-fit: cover; }
 
-.message-bubble { max-width: 75%; min-width: 0; }
+.message-bubble { flex: 1; max-width: 100%; min-width: 0; }
 .user .message-bubble {
+  flex: 0 1 auto; max-width: 75%;
   background: #dbeafe; color: #1e3a8a;
   border: 1px solid #bfdbfe;
   border-radius: 16px 4px 16px 16px; padding: 10px 15px;
@@ -278,6 +273,24 @@ function toggleSpeak() {
 .user-img {
   max-width: 200px; max-height: 200px; border-radius: 10px;
   object-fit: cover; border: 1px solid var(--border-color);
+}
+
+.ai-images { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.ai-img {
+  max-width: 100%; max-height: 460px; border-radius: 12px;
+  border: 1px solid var(--border-color); cursor: zoom-in; background: var(--bg-sidebar);
+}
+
+/* AI 图片原图预览 */
+.img-preview-overlay {
+  position: fixed; inset: 0; z-index: 2100;
+  background: rgba(0, 0, 0, 0.78);
+  display: flex; align-items: center; justify-content: center;
+  cursor: zoom-out; padding: 24px;
+}
+.img-preview {
+  max-width: 92vw; max-height: 92vh; border-radius: 12px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.4); object-fit: contain;
 }
 
 .btn-action i { font-size: 12px; }
@@ -364,6 +377,11 @@ function toggleSpeak() {
 }
 .edit-btn.save:hover { opacity: 0.9; }
 .edit-btn.save:disabled { opacity: 0.5; cursor: default; }
+
+/* 移动端：触屏没有 hover，操作按钮不参与布局，避免把用户头像挤到下一行 */
+@media (max-width: 768px) {
+  .user-actions { display: none; }
+}
 
 /* 搜索结果定位高亮 */
 .message-item.highlighted .message-bubble {

@@ -101,6 +101,10 @@ function maskSettings(raw) {
         obj.apiKey = ''
         fields.push('ai_chat_settings.apiKey')
       }
+      if (obj.secondaryApiKey) {
+        obj.secondaryApiKey = ''
+        fields.push('ai_chat_settings.secondaryApiKey')
+      }
       if (obj.tavilyApiKey) {
         obj.tavilyApiKey = ''
         fields.push('ai_chat_settings.tavilyApiKey')
@@ -205,6 +209,9 @@ export function summarizeBackup(entries) {
     } else if (settingsObj.tavilyApiKey) {
       parts.push('搜索服务已配置')
     }
+    if (settingsObj.secondaryApiBase && settingsObj.secondaryModel) {
+      parts.push(settingsObj.secondaryApiKey ? '副模型已配置' : '副模型配置（Key 脱敏）')
+    }
   }
   if (entries[SETTINGS_KEY]) parts.push('应用设置')
 
@@ -233,13 +240,16 @@ export function parseBackup(text) {
 export function applyBackup(entries) {
   // 导入前保留本机密钥，避免备份中的脱敏空值覆盖真实 Key
   let currentApiKey = ''
+  let currentSecondaryKey = ''
   let currentTavilyKey = ''
   try {
     const current = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')
     currentApiKey = current.apiKey || ''
+    currentSecondaryKey = current.secondaryApiKey || ''
     currentTavilyKey = current.tavilyApiKey || ''
   } catch {
     currentApiKey = ''
+    currentSecondaryKey = ''
     currentTavilyKey = ''
   }
 
@@ -256,6 +266,7 @@ export function applyBackup(entries) {
       const obj = parseRaw(raw, null)
       if (obj && typeof obj === 'object') {
         if (!obj.apiKey && currentApiKey) obj.apiKey = currentApiKey
+        if (!obj.secondaryApiKey && currentSecondaryKey) obj.secondaryApiKey = currentSecondaryKey
         if (!obj.tavilyApiKey && currentTavilyKey) obj.tavilyApiKey = currentTavilyKey
         localStorage.setItem(key, JSON.stringify(obj))
         continue
