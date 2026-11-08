@@ -112,11 +112,10 @@ export async function generateImage(prompt, { apiBase, apiKey, model = 'glm-imag
       const remoteUrl = String(item.url || '')
       if (!remoteUrl) return { ok: false, message: '图片生成失败：接口未返回图片地址' }
 
-      let dataUrl = ''
-      try {
-        const imgResp = await fetch(remoteUrl)
-        if (imgResp.ok) dataUrl = await blobToDataUrl(await imgResp.blob())
-      } catch { /* 图片域名不允许跨域读取时退回远程地址 */ }
+      // 图片链接是临时地址（30 天），且源站不允许跨域读取；
+      // 直接拿不到时走图片代理转成 data URL，避免之后无法下载/失效
+      const blob = await fetchImageBlob(remoteUrl)
+      const dataUrl = blob ? await blobToDataUrl(blob) : ''
 
       return { ok: true, url: remoteUrl, dataUrl }
     } catch (err) {
@@ -151,6 +150,23 @@ async function readError(resp) {
 
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+/** 先直连取图，跨域被拒时退回图片代理（源站 CDN 未开放 CORS） */
+async function fetchImageBlob(url) {
+  const attempts = [
+    url,
+    `https://images.weserv.nl/?url=${encodeURIComponent(url)}`,
+  ]
+  for (const target of attempts) {
+    try {
+      const resp = await fetch(target, { signal: AbortSignal.timeout(30000) })
+      if (!resp.ok) continue
+      const blob = await resp.blob()
+      if (blob.type.startsWith('image/')) return blob
+    } catch { /* 尝试下一种方式 */ }
+  }
+  return null
 }
 
 function blobToDataUrl(blob) {

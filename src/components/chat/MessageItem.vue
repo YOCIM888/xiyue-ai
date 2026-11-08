@@ -71,8 +71,10 @@
 
       <!-- AI 生成的图片 -->
       <div v-if="message.role === 'assistant' && message.images?.length" class="ai-images">
-        <img v-for="(img, i) in message.images" :key="i" :src="img" class="ai-img" alt="AI 生成图片"
-          loading="lazy" title="点击查看原图" @click="previewImage(img)" />
+        <div v-for="(img, i) in message.images" :key="i" class="ai-img-wrap">
+          <img :src="img" class="ai-img" alt="AI 生成图片"
+            loading="lazy" title="点击查看原图" @click="previewImage(img)" />
+        </div>
       </div>
 
       <div class="message-actions" v-if="message.role === 'assistant'">
@@ -93,7 +95,10 @@
           <i class="fa-solid fa-code-branch"></i>
         </button>
         <button v-if="isLastAi" class="btn-action" @click="chatStore.continueResponse()" title="继续生成">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1" stroke-linejoin="round"><polygon points="8 5 19 12 8 19"/></svg>
+        </button>
+        <button v-if="message.images?.length" class="btn-action save-image" @click="downloadMessageImages" title="保存图片">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         </button>
         <button class="btn-action danger" @click="confirmDelete(index)" title="删除">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
@@ -143,6 +148,8 @@ const editing = ref(false)
 const editText = ref('')
 const editTextarea = ref(null)
 const previewUrl = ref('')
+// 源站 CDN 未开 CORS 时，通过图片代理取字节
+const PROXY_PREFIX = 'https://images.weserv.nl/?url='
 
 const hasVersions = computed(() =>
   Array.isArray(props.message.versions) && props.message.versions.length > 1
@@ -194,6 +201,106 @@ function copyContent() {
 
 function previewImage(url) {
   previewUrl.value = url || ''
+}
+
+// 依次保存这条消息里的所有生成图片
+async function downloadMessageImages() {
+  const images = props.message.images || []
+  for (let i = 0; i < images.length; i += 1) {
+    await downloadImage(images[i], i)
+    if (i < images.length - 1) await new Promise(r => setTimeout(r, 400))
+  }
+}
+
+// 保存 AI 生成图片到本地：data URL 直接下载；远程地址依次尝试 fetch / canvas，
+// 都不行时打开新标签页并提示手动另存（外链图片受跨域限制无法直接取字节）
+async function downloadImage(url, index = 0) {
+  if (!url) return
+  try {
+    let blob = null
+    if (!url.startsWith('data:')) {
+      try {
+        blob = await fetchImageBlob(url)
+      } catch {
+        try { blob = await canvasImageBlob(url) } catch { /* 继续走兜底 */ }
+      }
+      if (!blob) {
+        try { blob = await fetchImageBlob(PROXY_PREFIX + encodeURIComponent(url)) } catch { /* 继续走兜底 */ }
+      }
+      if (!blob) {
+        window.open(url, '_blank', 'noopener')
+        window.__ui?.showToast('该图片为外部链接，无法直接下载，已在新标签页打开，请右键另存为', 'info', 4200)
+        return
+      }
+    }
+
+    const ext = blob ? blobExt(blob) : imageExt(url)
+    const name = `xiyue-image-${imageStamp()}-${index + 1}.${ext}`
+    const href = blob ? URL.createObjectURL(blob) : url
+    const a = document.createElement('a')
+    a.href = href
+    a.download = name
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    if (blob) setTimeout(() => URL.revokeObjectURL(href), 2000)
+    window.__ui?.showToast('图片已保存', 'success', 2000)
+  } catch (err) {
+    window.__ui?.showToast(`保存失败：${err?.message || '无法下载图片'}`, 'error', 3200)
+  }
+}
+
+async function fetchImageBlob(url) {
+  const resp = await fetch(url, { mode: 'cors', signal: AbortSignal.timeout(30000) })
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+  const blob = await resp.blob()
+  if (!blob.type.startsWith('image/')) throw new Error('返回内容不是图片')
+  return blob
+}
+
+// 外链图片若允许跨域读取，可通过 canvas 导出字节
+function canvasImageBlob(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas')
+        canvas.width = img.naturalWidth || img.width
+        canvas.height = img.naturalHeight || img.height
+        canvas.getContext('2d').drawImage(img, 0, 0)
+        canvas.toBlob(b => (b ? resolve(b) : reject(new Error('导出失败'))), 'image/png')
+      } catch (err) {
+        reject(err)
+      }
+    }
+    img.onerror = () => reject(new Error('图片加载失败'))
+    img.src = url
+  })
+}
+
+function blobExt(blob) {
+  const sub = String(blob.type || '').split('/')[1] || ''
+  if (!sub) return 'png'
+  return sub === 'jpeg' ? 'jpg' : sub.replace(/\+.*$/, '')
+}
+
+function imageExt(url) {
+  const dataMatch = /^data:image\/([a-z0-9.+-]+)/i.exec(url)
+  if (dataMatch) {
+    const ext = dataMatch[1].toLowerCase()
+    return ext === 'jpeg' ? 'jpg' : ext
+  }
+  const pathMatch = /\.(png|jpe?g|webp|gif|bmp)$/i.exec(String(url).split('?')[0])
+  if (!pathMatch) return 'png'
+  const ext = pathMatch[1].toLowerCase()
+  return ext === 'jpeg' ? 'jpg' : ext
+}
+
+function imageStamp() {
+  const d = new Date()
+  const pad = n => String(n).padStart(2, '0')
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
 }
 
 function saveToAssets() {
@@ -276,9 +383,11 @@ function saveToAssets() {
 }
 
 .ai-images { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.ai-img-wrap { display: inline-flex; max-width: 100%; }
 .ai-img {
   max-width: 100%; max-height: 460px; border-radius: 12px;
   border: 1px solid var(--border-color); cursor: zoom-in; background: var(--bg-sidebar);
+  display: block;
 }
 
 /* AI 图片原图预览 */
@@ -378,8 +487,13 @@ function saveToAssets() {
 .edit-btn.save:hover { opacity: 0.9; }
 .edit-btn.save:disabled { opacity: 0.5; cursor: default; }
 
-/* 移动端：触屏没有 hover，操作按钮不参与布局，避免把用户头像挤到下一行 */
+/* 触屏设备没有 hover，操作按钮常显，否则保存按钮无法点到 */
+@media (hover: none) {
+  .message-actions { opacity: 1; }
+}
+
 @media (max-width: 768px) {
+  .message-actions { opacity: 1; }
   .user-actions { display: none; }
 }
 
