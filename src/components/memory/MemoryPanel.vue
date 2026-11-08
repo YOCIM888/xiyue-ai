@@ -36,17 +36,6 @@
         </div>
 
         <div v-else class="memory-body">
-          <div class="memory-switch-card">
-            <div class="msc-info">
-              <div class="msc-title">禁用记忆</div>
-              <div class="msc-desc">开启后，AI 在新对话中将不再读取这些记忆</div>
-            </div>
-            <label class="switch" :title="store.disabled ? '点击恢复记忆' : '点击禁用记忆'">
-              <input v-model="store.disabled" type="checkbox" />
-              <span class="switch-track"><span class="switch-thumb"></span></span>
-            </label>
-          </div>
-
           <div class="memory-access-card">
             <div class="mac-head">记忆读取权限</div>
 
@@ -106,7 +95,7 @@
             </div>
           </div>
           <p class="access-hint">
-            主记忆与上方「禁用记忆」是同一个总开关。关闭后，两个「读取主记忆」子开关不可用；私聊与群聊互读不受影响。所有读取都会自动限制条数和长度。
+            主记忆是读取长期记忆的总开关。关闭后，两个「读取主记忆」子开关不可用；私聊与群聊互读不受影响。所有读取都会自动限制条数和长度。
           </p>
 
           <div v-if="selectMode" class="select-bar">
@@ -270,7 +259,6 @@ async function deleteSelected() {
 
 .memory-body { flex: 1; overflow-y: auto; padding: 14px 20px 20px; }
 
-.memory-switch-card { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border: 1px solid var(--border-color); border-radius: 12px; background: var(--bg-card); margin-bottom: 14px; }
 .msc-info { flex: 1; min-width: 0; }
 .msc-title { font-size: 14px; font-weight: 600; color: var(--text-primary); }
 .msc-desc { margin-top: 3px; font-size: 12px; line-height: 1.5; color: var(--text-muted); }

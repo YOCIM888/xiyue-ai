@@ -51,12 +51,6 @@ export const useMemoryStore = defineStore('memory', () => {
 
   const sorted = computed(() => [...memories.value].sort((a, b) => b.updatedAt - a.updatedAt))
 
-  // 供 UI 直接绑定“禁用记忆”开关
-  const disabled = computed({
-    get: () => !enabled.value,
-    set: (v) => { enabled.value = !v },
-  })
-
   function persist() {
     try {
       localStorage.setItem(KEY, JSON.stringify(memories.value))
@@ -107,5 +101,5 @@ export const useMemoryStore = defineStore('memory', () => {
   watch(enabled, persistEnabled)
   watch(access, persistAccess, { deep: true })
 
-  return { memories, sorted, enabled, disabled, access, create, update, remove, removeMany }
+  return { memories, sorted, enabled, access, create, update, remove, removeMany }
 })

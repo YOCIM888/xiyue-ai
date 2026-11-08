@@ -33,7 +33,7 @@ function labelOf(key) {
   if (key.startsWith('chat_messages_')) return `会话消息 #${key.slice('chat_messages_'.length)}`
   if (key.startsWith('chat_conv_v2_')) return `会话（含分支） #${key.slice('chat_conv_v2_'.length)}`
   if (key === 'xiyue_memories') return '记忆列表'
-  if (key === 'xiyue_memory_enabled') return '记忆开关'
+  if (key === 'xiyue_memory_enabled') return '主记忆开关'
   if (key === 'xiyue_memory_access') return '记忆读取权限'
   if (key === 'xiyue_starry_friends') return '好友列表'
   if (key === 'xiyue_starry_groups') return '群聊列表'
