@@ -89,11 +89,11 @@
         >
           <i class="fa-solid fa-rotate-right"></i>
         </button>
-        <button v-if="isLastAi" class="btn-action" @click="chatStore.continueResponse()" title="继续生成">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-        </button>
         <button class="btn-action" @click="branchHere" title="从此处创建分支">
           <i class="fa-solid fa-code-branch"></i>
+        </button>
+        <button v-if="isLastAi" class="btn-action" @click="chatStore.continueResponse()" title="继续生成">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
         <button class="btn-action danger" @click="confirmDelete(index)" title="删除">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
