@@ -19,11 +19,14 @@ export const useSettingsStore = defineStore('settings', () => {
     maxTokens: 32768,
     contextLength: 131072,
     topP: 0.9,
-    personaPrompt: '你是一个有用、友好的AI助手。请用中文回答用户的问题。',
+    personaPrompt: '你是一个有用、友好的AI助手。请根据用户使用的语言回答用户的问题。',
     userName: '',
+    userPersona: '',
+    replyRules: '1. 不得过度说教、批评，保持专业性。\n2. 对于不确定或不准确的问题，应在文末提示。',
+    replyRulesEnabled: true,
     thinkingEnabled: false,
     userAvatar: '',
-    personaEnabled: false,
+    personaEnabled: true,
     darkMode: false,
     linkSkillEnabled: true,
     documentSkillEnabled: false,
@@ -34,12 +37,17 @@ export const useSettingsStore = defineStore('settings', () => {
     tavilyApiKey: '',
     searchDepth: 'basic',
     searchMaxResults: 5,
+    searchMaxChars: 10000,
+    searchItemMaxChars: 1200,
     imageGenSkillEnabled: false,
     // 副模型 API：负责多模态扩展（图片理解、生图）
     secondaryApiBase: 'https://open.bigmodel.cn/api/paas/v4',
     secondaryApiKey: '',
     secondaryModel: 'glm-4.6v-flash',
     secondaryImageModel: 'glm-image',
+    // 用量费用估算单价（元 / 百万 token），0 表示不估算
+    usageInputPrice: 0,
+    usageOutputPrice: 0,
     backgroundImage: '',
     symbolRules: defaultSymbolRules(),
     hideUserAvatar: false,
@@ -47,6 +55,8 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   const saved = loadSettings()
+  // 旧版没有用户人设/回复规则配置：视为从旧「提示设置」升级，默认开启 AI 人设与回复规则
+  const legacyPromptConfig = !('userPersona' in saved)
 
   const apiKey = ref(saved.apiKey ?? defaults.apiKey)
   const apiBase = ref(saved.apiBase ?? defaults.apiBase)
@@ -55,11 +65,18 @@ export const useSettingsStore = defineStore('settings', () => {
   const maxTokens = ref(saved.maxTokens ?? defaults.maxTokens)
   const contextLength = ref(saved.contextLength ?? defaults.contextLength)
   const topP = ref(saved.topP ?? defaults.topP)
-  const personaPrompt = ref(saved.personaPrompt ?? defaults.personaPrompt)
+  const personaPrompt = ref(
+    saved.personaPrompt === '你是一个有用、友好的AI助手。请用中文回答用户的问题。'
+      ? defaults.personaPrompt
+      : (saved.personaPrompt ?? defaults.personaPrompt)
+  )
   const userName = ref(saved.userName ?? defaults.userName)
+  const userPersona = ref(saved.userPersona ?? defaults.userPersona)
+  const replyRules = ref(saved.replyRules ?? defaults.replyRules)
+  const replyRulesEnabled = ref(saved.replyRulesEnabled ?? defaults.replyRulesEnabled)
   const thinkingEnabled = ref(saved.thinkingEnabled ?? defaults.thinkingEnabled)
   const userAvatar = ref(saved.userAvatar ?? defaults.userAvatar)
-  const personaEnabled = ref(saved.personaEnabled ?? defaults.personaEnabled)
+  const personaEnabled = ref(legacyPromptConfig ? defaults.personaEnabled : (saved.personaEnabled ?? defaults.personaEnabled))
   const darkMode = ref(saved.darkMode ?? window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? defaults.darkMode)
   const linkSkillEnabled = ref(saved.linkSkillEnabled ?? defaults.linkSkillEnabled)
   const documentSkillEnabled = ref(saved.documentSkillEnabled ?? defaults.documentSkillEnabled)
@@ -70,11 +87,15 @@ export const useSettingsStore = defineStore('settings', () => {
   const tavilyApiKey = ref(saved.tavilyApiKey ?? defaults.tavilyApiKey)
   const searchDepth = ref(saved.searchDepth ?? defaults.searchDepth)
   const searchMaxResults = ref(saved.searchMaxResults ?? defaults.searchMaxResults)
+  const searchMaxChars = ref(saved.searchMaxChars ?? defaults.searchMaxChars)
+  const searchItemMaxChars = ref(saved.searchItemMaxChars ?? defaults.searchItemMaxChars)
   const imageGenSkillEnabled = ref(saved.imageGenSkillEnabled ?? defaults.imageGenSkillEnabled)
   const secondaryApiBase = ref(saved.secondaryApiBase ?? defaults.secondaryApiBase)
   const secondaryApiKey = ref(saved.secondaryApiKey ?? defaults.secondaryApiKey)
   const secondaryModel = ref(saved.secondaryModel ?? defaults.secondaryModel)
   const secondaryImageModel = ref(saved.secondaryImageModel ?? defaults.secondaryImageModel)
+  const usageInputPrice = ref(saved.usageInputPrice ?? defaults.usageInputPrice)
+  const usageOutputPrice = ref(saved.usageOutputPrice ?? defaults.usageOutputPrice)
   const backgroundImage = ref(saved.backgroundImage ?? defaults.backgroundImage)
   const symbolRules = ref(Array.isArray(saved.symbolRules) && saved.symbolRules.length ? saved.symbolRules : defaults.symbolRules)
   const hideUserAvatar = ref(saved.hideUserAvatar ?? defaults.hideUserAvatar)
@@ -143,6 +164,9 @@ export const useSettingsStore = defineStore('settings', () => {
       topP: topP.value,
       personaPrompt: personaPrompt.value,
       userName: userName.value,
+      userPersona: userPersona.value,
+      replyRules: replyRules.value,
+      replyRulesEnabled: replyRulesEnabled.value,
       thinkingEnabled: thinkingEnabled.value,
       userAvatar: userAvatar.value,
       personaEnabled: personaEnabled.value,
@@ -156,11 +180,15 @@ export const useSettingsStore = defineStore('settings', () => {
       tavilyApiKey: tavilyApiKey.value,
       searchDepth: searchDepth.value,
       searchMaxResults: searchMaxResults.value,
+      searchMaxChars: searchMaxChars.value,
+      searchItemMaxChars: searchItemMaxChars.value,
       imageGenSkillEnabled: imageGenSkillEnabled.value,
       secondaryApiBase: secondaryApiBase.value,
       secondaryApiKey: secondaryApiKey.value,
       secondaryModel: secondaryModel.value,
       secondaryImageModel: secondaryImageModel.value,
+      usageInputPrice: usageInputPrice.value,
+      usageOutputPrice: usageOutputPrice.value,
       backgroundImage: backgroundImage.value,
       symbolRules: symbolRules.value,
       hideUserAvatar: hideUserAvatar.value,
@@ -172,23 +200,24 @@ export const useSettingsStore = defineStore('settings', () => {
 
   // 自动持久化：任何设置变更立刻保存
   watch(
-    [apiKey, apiBase, model, temperature, maxTokens, contextLength, topP, personaPrompt, userName, thinkingEnabled, userAvatar, personaEnabled, darkMode, linkSkillEnabled, documentSkillEnabled, ocrSkillEnabled, modelVisionMode, searchSkillEnabled, forceSearch, tavilyApiKey, searchDepth, searchMaxResults, imageGenSkillEnabled, secondaryApiBase, secondaryApiKey, secondaryModel, secondaryImageModel, backgroundImage, hideUserAvatar, hideAiAvatar],
+    [apiKey, apiBase, model, temperature, maxTokens, contextLength, topP, personaPrompt, userName, userPersona, replyRules, replyRulesEnabled, thinkingEnabled, userAvatar, personaEnabled, darkMode, linkSkillEnabled, documentSkillEnabled, ocrSkillEnabled, modelVisionMode, searchSkillEnabled, forceSearch, tavilyApiKey, searchDepth, searchMaxResults, searchMaxChars, searchItemMaxChars, imageGenSkillEnabled, secondaryApiBase, secondaryApiKey, secondaryModel, secondaryImageModel, usageInputPrice, usageOutputPrice, backgroundImage, hideUserAvatar, hideAiAvatar],
     () => persist(),
     { deep: false }
   )
   watch(symbolRules, () => persist(), { deep: true })
 
   // 老版本没有副模型配置：首次加载时写回默认结构，同时保留原有主模型配置
-  if (!('secondaryApiBase' in saved)) {
+  if (!('secondaryApiBase' in saved) || legacyPromptConfig) {
     persist()
   }
 
   return {
-    apiKey, apiBase, model, temperature, maxTokens, contextLength, topP, personaPrompt, userName, thinkingEnabled, userAvatar, personaEnabled, darkMode, linkSkillEnabled,
+    apiKey, apiBase, model, temperature, maxTokens, contextLength, topP, personaPrompt, userName, userPersona, replyRules, replyRulesEnabled, thinkingEnabled, userAvatar, personaEnabled, darkMode, linkSkillEnabled,
     backgroundImage, symbolRules, hideUserAvatar, hideAiAvatar, documentSkillEnabled,
     ocrSkillEnabled, modelVisionMode,
-    searchSkillEnabled, forceSearch, tavilyApiKey, searchDepth, searchMaxResults, imageGenSkillEnabled,
+    searchSkillEnabled, forceSearch, tavilyApiKey, searchDepth, searchMaxResults, searchMaxChars, searchItemMaxChars, imageGenSkillEnabled,
     secondaryApiBase, secondaryApiKey, secondaryModel, secondaryImageModel, secondaryReady, secondaryPresets, applySecondaryPreset,
+    usageInputPrice, usageOutputPrice,
     modelPresets, applyPreset, persist, settingsReady, defaults,
   }
 })

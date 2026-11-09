@@ -24,7 +24,7 @@
                 <svg v-else-if="sec.key === 'search'" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
                 <svg v-else-if="sec.key === 'params'" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
                 <svg v-else-if="sec.key === 'appearance'" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><circle cx="6.5" cy="12.5" r="1.5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>
-                <svg v-else-if="sec.key === 'prompt'" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                <svg v-else-if="sec.key === 'usage'" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><polyline points="7 14 11 10 14 13 20 6"/></svg>
                 <i v-else class="fa-solid fa-database"></i>
               </span>
               <span class="menu-text">
@@ -56,6 +56,135 @@
               </div>
               <input ref="fileInput" type="file" accept="image/*" style="display:none" @change="onFileChange" />
             </div>
+
+            <div class="divider"></div>
+
+            <div class="field">
+              <label>用户人设</label>
+              <textarea
+                v-model="settings.userPersona"
+                class="persona-input"
+                rows="3"
+                placeholder="例如：我是一名前端开发者，喜欢简洁直接的回答…"
+              ></textarea>
+              <span class="range-hint">会附加到每次对话，帮助 AI 了解你的背景与偏好；留空则不附加。</span>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="section-header">
+              <h3 class="sub-title">AI 人设提示</h3>
+              <label class="switch-label">
+                <input type="checkbox" v-model="settings.personaEnabled" class="switch-input" />
+                <span class="switch-track">
+                  <span class="switch-thumb"></span>
+                </span>
+                <span class="switch-text">{{ settings.personaEnabled ? '已启用' : '已关闭' }}</span>
+              </label>
+            </div>
+            <p class="hint" v-if="settings.personaEnabled">开启时优先遵守下方人设提示词。</p>
+            <p class="hint" v-else>关闭后使用白曦月默认人设。</p>
+            <textarea
+              v-model="settings.personaPrompt"
+              class="persona-input"
+              rows="5"
+              placeholder="例如：你是一个专业的中文助手..."
+            ></textarea>
+
+            <div class="divider"></div>
+
+            <div class="section-header">
+              <h3 class="sub-title">AI 回复规则</h3>
+              <label class="switch-label">
+                <input type="checkbox" v-model="settings.replyRulesEnabled" class="switch-input" />
+                <span class="switch-track">
+                  <span class="switch-thumb"></span>
+                </span>
+                <span class="switch-text">{{ settings.replyRulesEnabled ? '已启用' : '已关闭' }}</span>
+              </label>
+            </div>
+            <textarea
+              v-model="settings.replyRules"
+              class="persona-input"
+              rows="4"
+              placeholder="例如：1. 不得过度说教、批评，保持专业性。"
+            ></textarea>
+            <p class="hint">规则会追加在系统提示词末尾，关闭后不生效。</p>
+          </div>
+
+          <!-- 用量查询 -->
+          <div v-else-if="activeSection === 'usage'" class="section-page">
+            <h3 class="sub-title"><i class="fa-solid fa-wallet"></i> 主模型余额</h3>
+            <div class="usage-balance-card">
+              <div class="balance-main">
+                <template v-if="mainBalance.loading">
+                  <span class="balance-message">正在查询余额…</span>
+                </template>
+                <template v-else-if="mainBalance.ok">
+                  <span class="balance-amount">{{ mainBalance.currency === 'USD' ? '$' : '¥' }}{{ mainBalance.total.toFixed(2) }}</span>
+                  <span class="balance-meta">
+                    赠金 {{ mainBalance.granted.toFixed(2) }} · 充值 {{ mainBalance.toppedUp.toFixed(2) }}
+                    <template v-if="balanceTime !== '—'"> · {{ balanceTime }} 更新</template>
+                  </span>
+                  <span v-if="!mainBalance.isAvailable" class="balance-warn">余额不足，模型调用可能失败</span>
+                </template>
+                <template v-else>
+                  <span class="balance-message">{{ mainBalance.message }}</span>
+                </template>
+              </div>
+              <button class="btn-secondary" :disabled="mainBalance.loading" @click="refreshBalance">刷新</button>
+            </div>
+
+            <div class="divider"></div>
+
+            <h3 class="sub-title"><i class="fa-solid fa-chart-line"></i> 本应用用量</h3>
+            <div class="usage-grid">
+              <div class="usage-stat">
+                <span class="usage-label">本月调用</span>
+                <span class="usage-value">{{ usageSummary.current.calls }}</span>
+              </div>
+              <div class="usage-stat">
+                <span class="usage-label">本月输入</span>
+                <span class="usage-value">{{ formatTokenCount(usageSummary.current.prompt) }}</span>
+              </div>
+              <div class="usage-stat">
+                <span class="usage-label">本月输出</span>
+                <span class="usage-value">{{ formatTokenCount(usageSummary.current.completion) }}</span>
+              </div>
+              <div class="usage-stat">
+                <span class="usage-label">本月估算</span>
+                <span class="usage-value">{{ hasPrice ? '¥' + formatCost(currentCost) : '未设单价' }}</span>
+              </div>
+            </div>
+            <p class="usage-total">
+              累计 {{ formatTokenCount(usageSummary.total.prompt) }} 输入 · {{ formatTokenCount(usageSummary.total.completion) }} 输出 · {{ usageSummary.total.calls }} 次调用
+              <template v-if="usageSummary.total.estimated">（其中 {{ usageSummary.total.estimated }} 次为估算值）</template>
+            </p>
+
+            <h3 class="sub-title">费用单价</h3>
+            <div class="field">
+              <label>输入单价（元 / 百万 token）</label>
+              <input v-model.number="settings.usageInputPrice" type="number" min="0" step="0.01" placeholder="例如 2" />
+            </div>
+            <div class="field">
+              <label>输出单价（元 / 百万 token）</label>
+              <input v-model.number="settings.usageOutputPrice" type="number" min="0" step="0.01" placeholder="例如 8" />
+            </div>
+            <p class="hint">单价由你填写，应用不内置可能过期的价目表；保持 0 表示不估算费用。</p>
+
+            <template v-if="monthModels.length">
+              <h3 class="sub-title">本月按模型</h3>
+              <div class="usage-table">
+                <div class="usage-tr head"><span>模型</span><span>调用</span><span>输入</span><span>输出</span></div>
+                <div v-for="m in monthModels" :key="m.model" class="usage-tr">
+                  <span class="usage-model" :title="m.model">{{ m.model }}</span>
+                  <span>{{ m.calls }}</span>
+                  <span>{{ formatTokenCount(m.prompt) }}</span>
+                  <span>{{ formatTokenCount(m.completion) }}</span>
+                </div>
+              </div>
+            </template>
+            <p v-else class="hint">还没有用量记录。发送消息后会自动统计主模型与副模型的 token 消耗。</p>
           </div>
 
           <!-- 模型设置 -->
@@ -213,6 +342,25 @@
                 </button>
               </div>
             </div>
+
+            <div class="divider"></div>
+
+            <h3 class="sub-title">搜索结果注入</h3>
+            <div class="field">
+              <label>结果条数上限（{{ settings.searchMaxResults }} 条）</label>
+              <input v-model.number="settings.searchMaxResults" type="range" min="1" max="10" step="1" />
+              <span class="range-hint">1–10 条，默认 5 条；条数越多占用的上下文越多。</span>
+            </div>
+            <div class="field">
+              <label>注入总字符上限（{{ settings.searchMaxChars.toLocaleString() }} 字）</label>
+              <input v-model.number="settings.searchMaxChars" type="range" min="2000" max="30000" step="1000" />
+              <span class="range-hint">所有搜索结果拼成上下文后的总长度上限，超出部分会被截断。</span>
+            </div>
+            <div class="field">
+              <label>单条结果字符上限（{{ settings.searchItemMaxChars }} 字）</label>
+              <input v-model.number="settings.searchItemMaxChars" type="range" min="300" max="3000" step="100" />
+              <span class="range-hint">每条结果保留的正文长度；越长信息越全，也越占上下文。</span>
+            </div>
           </div>
 
           <!-- 参数设置 -->
@@ -333,28 +481,6 @@
             <p class="hint">开启后对话页面仅显示消息气泡，不显示对应头像。</p>
           </div>
 
-          <!-- 提示设置 -->
-          <div v-else-if="activeSection === 'prompt'" class="section-page">
-            <div class="section-header">
-              <h3 class="sub-title">人设提示词</h3>
-              <label class="switch-label">
-                <input type="checkbox" v-model="settings.personaEnabled" class="switch-input" />
-                <span class="switch-track">
-                  <span class="switch-thumb"></span>
-                </span>
-                <span class="switch-text">{{ settings.personaEnabled ? '已启用' : '已关闭' }}</span>
-              </label>
-            </div>
-            <p class="hint" v-if="settings.personaEnabled">当前优先遵守人设提示词，系统提示词作为补充。</p>
-            <p class="hint" v-else>关闭状态，仅遵守系统提示词。</p>
-            <textarea
-              v-model="settings.personaPrompt"
-              class="persona-input"
-              rows="8"
-              placeholder="例如：你是一个专业的中文助手..."
-            ></textarea>
-          </div>
-
           <!-- 数据设置 -->
           <div v-else-if="activeSection === 'data'" class="section-page">
             <div class="usage-card">
@@ -389,9 +515,6 @@
               <div v-if="quota.percent" class="engine-bar">
                 <span :class="{ warn: quota.percent >= 85 }" :style="{ width: Math.min(100, quota.percent) + '%' }"></span>
               </div>
-              <p class="hint engine-hint">
-                会话、文档、图片等大数据存放在 IndexedDB，localStorage 只保留设置等小配置；接近配额时会自动提醒。
-              </p>
             </div>
 
             <div class="module-list">
@@ -428,10 +551,9 @@
               </button>
               <input ref="importDataInput" type="file" accept=".json,application/json" style="display:none" @change="importAllData" />
             </div>
-            <p class="hint">导出文件包含版本号、导出时间与全部应用数据，文件名带日期，可用于备份或迁移到其他设备。</p>
             <p class="hint protect-hint">
               <i class="fa-solid fa-shield-halved"></i>
-              主模型 / 副模型 API Key 与搜索 Key 等敏感配置不会写入导出文件；导入时也会保留本机当前的主模型 Key、副模型 Key 和 Tavily Key。
+              主/副模型API Key与搜索Key等敏感配置不会写入导出文件；导入时也会保留本机当前的Key.
             </p>
 
             <div class="divider"></div>
@@ -477,6 +599,13 @@ import {
   restoreAutoBackup,
 } from '../../utils/dataBackup'
 import { clearAppData, storageEstimate } from '../../utils/kv'
+import { fetchBalance } from '../../services/balance'
+import {
+  estimateUsageCost,
+  formatCost,
+  formatTokenCount,
+  getUsageSummary,
+} from '../../services/usageStats'
 
 const settings = useSettingsStore()
 const visible = ref(false)
@@ -487,12 +616,12 @@ const fileInput = ref(null)
 const importDataInput = ref(null)
 // 设置栏目
 const sections = [
-  { key: 'user', title: '用户信息', desc: '昵称与头像' },
+  { key: 'user', title: '用户信息', desc: '昵称、头像与人设' },
+  { key: 'usage', title: '用量查询', desc: '服务商余额与本应用消耗' },
   { key: 'model', title: '模型设置', desc: '模型选择与 API 配置' },
   { key: 'search', title: '搜索服务', desc: 'Tavily API Key 与搜索深度' },
   { key: 'params', title: '参数设置', desc: 'Temperature、Top P 与上下文/输出长度' },
   { key: 'appearance', title: '外观设置', desc: '自定义背景、符号文字样式与头像显示' },
-  { key: 'prompt', title: '提示设置', desc: '人设提示词与启用状态' },
   { key: 'data', title: '数据设置', desc: '存储占用、备份导出与导入恢复' },
 ]
 const activeSection = ref('')
@@ -517,6 +646,61 @@ function toggleModule(key) {
 function openSection(key) {
   activeSection.value = key
   if (key === 'data') refreshUsage()
+  if (key === 'usage') refreshUsagePage()
+}
+
+// 用量查询：余额 + 本应用 token 统计
+const mainBalance = ref({
+  loading: false,
+  ok: false,
+  message: '',
+  currency: 'CNY',
+  total: 0,
+  granted: 0,
+  toppedUp: 0,
+  isAvailable: true,
+  fetchedAt: 0,
+})
+const usageSummary = ref(getUsageSummary())
+
+const hasPrice = computed(() => Number(settings.usageInputPrice) > 0 || Number(settings.usageOutputPrice) > 0)
+const currentCost = computed(() => estimateUsageCost({
+  prompt: usageSummary.value.current.prompt,
+  completion: usageSummary.value.current.completion,
+  inputPrice: settings.usageInputPrice,
+  outputPrice: settings.usageOutputPrice,
+}))
+const monthModels = computed(() => {
+  const models = usageSummary.value.current.models || {}
+  return Object.entries(models)
+    .map(([model, v]) => ({ model, prompt: v.prompt || 0, completion: v.completion || 0, calls: v.calls || 0 }))
+    .sort((a, b) => (b.prompt + b.completion) - (a.prompt + a.completion))
+})
+const balanceTime = computed(() =>
+  mainBalance.value.fetchedAt ? new Date(mainBalance.value.fetchedAt).toLocaleTimeString() : '—'
+)
+
+async function refreshBalance() {
+  mainBalance.value = { ...mainBalance.value, loading: true }
+  const res = await fetchBalance({ apiBase: settings.apiBase, apiKey: settings.apiKey })
+  mainBalance.value = {
+    loading: false,
+    ok: !!res.ok,
+    message: res.message || '',
+    currency: res.currency || 'CNY',
+    total: res.total || 0,
+    granted: res.granted || 0,
+    toppedUp: res.toppedUp || 0,
+    isAvailable: res.isAvailable !== false,
+    fetchedAt: res.fetchedAt || 0,
+  }
+}
+
+function refreshUsagePage() {
+  usageSummary.value = getUsageSummary()
+  // 余额缓存 10 分钟，避免频繁请求服务商
+  const cached = mainBalance.value.fetchedAt && Date.now() - mainBalance.value.fetchedAt < 10 * 60 * 1000
+  if (!cached) refreshBalance()
 }
 
 // Token 档位
@@ -1328,6 +1512,67 @@ input[type="range"] {
   padding: 2px 4px;
 }
 .btn-link:hover { text-decoration: underline; }
+
+/* 用量查询 */
+.usage-balance-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-card);
+}
+.balance-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.balance-amount { font-size: 24px; font-weight: 700; color: var(--text-primary); line-height: 1.2; }
+.balance-meta { font-size: 12px; color: var(--text-muted); }
+.balance-warn { font-size: 12px; color: #ef4444; }
+.balance-message { font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
+
+.usage-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.usage-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-card);
+}
+.usage-label { font-size: 11px; color: var(--text-muted); }
+.usage-value { font-size: 16px; font-weight: 600; color: var(--text-primary); }
+.usage-total { margin-top: 10px; font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
+
+.usage-table {
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.usage-tr {
+  display: grid;
+  grid-template-columns: 1.6fr 0.6fr 0.7fr 0.7fr;
+  gap: 8px;
+  padding: 9px 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border-top: 1px solid var(--border-color);
+}
+.usage-tr:first-child { border-top: none; }
+.usage-tr.head { background: var(--bg-sidebar); color: var(--text-muted); font-size: 11px; }
+.usage-model {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+@media (max-width: 768px) {
+  .usage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 
 .module-list {
   display: flex;

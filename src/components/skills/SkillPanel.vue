@@ -88,21 +88,12 @@
                 联网搜索
                 <span class="skill-tag muted">默认</span>
               </div>
-              <div class="skill-desc">识别明确搜索意图，用 Tavily 检索最新信息并附带来源链接</div>
+              <div class="skill-desc">识别明确搜索意图，用 Tavily 检索最新信息并附来源</div>
             </div>
             <label class="switch" :title="settings.searchSkillEnabled ? '点击关闭' : '点击开启'">
               <input v-model="settings.searchSkillEnabled" type="checkbox" />
               <span class="switch-track"><span class="switch-thumb"></span></span>
             </label>
-          </div>
-
-          <div class="skill-option">
-            <div class="skill-option-head">
-              <span>结果条数上限</span>
-              <span class="skill-option-value">{{ settings.searchMaxResults }} 条</span>
-            </div>
-            <input v-model.number="settings.searchMaxResults" type="range" min="1" max="10" step="1" />
-            <div class="skill-option-hint">1–10 条，默认 5 条；条数越多占用上下文越多。</div>
           </div>
 
           <p v-if="settings.ocrSkillEnabled" class="skill-hint" :class="{ warn: !settings.secondaryReady && visionStatus === 'text' }">

@@ -29,6 +29,15 @@
 
       <!-- 历史对话：顶置 / 最近 分组 -->
       <div class="topic-list" ref="topicListRef">
+        <button
+          v-if="selectMode"
+          class="topic-export-btn"
+          :disabled="!selectedIds.size"
+          title="导出选中的对话"
+          @click="exportSelected"
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        </button>
         <div v-if="topicGroups.length === 0" class="empty-hint">暂无对话记录</div>
         <div v-for="(group, gi) in topicGroups" :key="group.key" class="topic-group">
           <div class="group-title">{{ group.label }}</div>
@@ -141,6 +150,7 @@ import { useTopicsStore } from '../../stores/topics'
 import { useChatStore } from '../../stores/chat'
 import { useSettingsStore } from '../../stores/settings'
 import { useRouter } from 'vue-router'
+import { loadConversation } from '../../utils/conversation'
 
 const topics = useTopicsStore()
 const chat = useChatStore()
@@ -272,6 +282,51 @@ async function deleteSelected() {
   exitSelectMode()
 }
 
+// 导出勾选的对话（Markdown，多个对话合并为一个文件）
+function exportStamp() {
+  const d = new Date()
+  const p = n => String(n).padStart(2, '0')
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`
+}
+
+function buildDialogMarkdown(topic, conv) {
+  const branch = conv?.branches?.find(b => b.id === conv.activeBranchId) || conv?.branches?.[0]
+  const messages = branch?.messages || []
+  const lines = [
+    `# ${topic?.title || '未命名对话'}`,
+    `> 导出时间：${new Date().toLocaleString()}`,
+  ]
+  if (!messages.length) lines.push('（暂无消息）')
+  for (const m of messages) {
+    const role = m.role === 'user' ? '用户' : 'AI'
+    let content = (m.content || '').trim() || '（空消息）'
+    if (m.images?.length) {
+      content += `\n\n（含 ${m.images.length} 张图片，图片未包含在导出文件中）`
+    }
+    lines.push(`### ${role}\n\n${content}`)
+  }
+  return lines.join('\n\n')
+}
+
+function exportSelected() {
+  const ids = [...selectedIds.value]
+  if (!ids.length) return
+  const blocks = ids.map(id => buildDialogMarkdown(
+    topics.topics.find(t => t.id === id),
+    loadConversation(id)
+  ))
+  const blob = new Blob([blocks.join('\n\n---\n\n')], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `xiyue-dialogs-${exportStamp()}.md`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 2000)
+  window.__ui?.showToast(`已导出 ${ids.length} 个对话`, 'success', 2400)
+}
+
 const assetPanel = inject('assetPanel', null)
 const skillPanel = inject('skillPanel', null)
 const memoryPanel = inject('memoryPanel', null)
@@ -368,7 +423,29 @@ function onSidebarTouchEnd(e) {
 .nav-btn:active { background: var(--bg-active); }
 
 /* 历史对话分组 */
-.topic-list { flex: 1; overflow-y: auto; overscroll-behavior: none; padding: 4px 8px 8px; }
+.topic-list { position: relative; flex: 1; overflow-y: auto; overscroll-behavior: none; padding: 4px 8px 8px; }
+
+/* 多选时列表右上角的小导出按钮 */
+.topic-export-btn {
+  position: absolute;
+  top: 2px;
+  right: 8px;
+  z-index: 3;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  transition: background 0.15s, color 0.15s;
+}
+.topic-export-btn:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-primary); }
+.topic-export-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .empty-hint { text-align: center; padding: 24px; color: var(--text-muted); font-size: 12px; }
 .group-title { padding: 6px 8px 4px; font-size: 11px; font-weight: 600; color: var(--text-muted); letter-spacing: 0.5px; }
 .group-divider { height: 1px; margin: 6px 4px; background: var(--border-color); }

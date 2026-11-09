@@ -11,7 +11,11 @@ import {
   detectSearchReply,
   searchWeb,
   buildSearchContext,
+  buildSearchFallbackText,
 } from '../services/webSearch'
+import { buildSearchQuery, detectTimeRange } from '../services/searchQuery'
+import { recordUsage } from '../services/usageStats'
+import { estimateMessagesTokens } from '../utils/contextUsage'
 import { detectImageIntent, generateImage } from '../services/imageGen'
 import {
   detectVisionSupport,
@@ -96,7 +100,16 @@ export const useChatStore = defineStore('chat', () => {
     saveMessages()
   }
 
-  async function generateReply(history, linkText, documentIds = [], searchBlock = '') {
+  // 服务商未返回 usage 时按字符估算，并标记 estimated
+  function buildEstimatedUsage(messages, content, model) {
+    const list = (Array.isArray(messages) ? messages : [])
+      .map(m => ({ role: m?.role, content: m?.content }))
+    const prompt = estimateMessagesTokens(list)
+    const completion = content ? estimateMessagesTokens([{ role: 'assistant', content }]) : 0
+    return { prompt, completion, total: prompt + completion, model: model || '未知模型', estimated: true }
+  }
+
+  async function generateReply(history, linkText, documentIds = [], searchBlock = '', options = {}) {
     const settings = useSettingsStore()
     const ocrEnabled = !!settings.ocrSkillEnabled
     const lastUser = [...history].reverse().find(m => m.role === 'user')
@@ -124,6 +137,7 @@ export const useChatStore = defineStore('chat', () => {
 
     let fullContent = ''
     let fullThinking = ''
+    let lastUsage = null
     let imageNotice = ''
     let attemptedModel = useSecondary ? settings.secondaryModel : settings.model
     let attemptedSecondary = useSecondary
@@ -153,13 +167,15 @@ export const useChatStore = defineStore('chat', () => {
         apiMessages = await attachLinkContext(chatMessages, linkText)
       }
       if (settings.documentSkillEnabled && documentIds.length) {
-        const { attachDocumentContext } = await import('../services/documentParser')
+        const { retrieveDocumentContext } = await import('../services/docRetrieval')
         const assetsStore = useAssetsStore()
         const documents = documentIds
           .map(id => assetsStore.assets.find(a => a.id === id))
           .filter(Boolean)
         if (documents.length) {
-          apiMessages = attachDocumentContext(apiMessages, documents)
+          // 长文档按当前问题做切片检索；短文档仍整篇注入
+          const retrieval = retrieveDocumentContext(apiMessages, documents, lastUser?.content || '')
+          apiMessages = retrieval.messages
         }
       }
       if (searchBlock) {
@@ -177,7 +193,7 @@ export const useChatStore = defineStore('chat', () => {
         fullThinking = ''
         streamingContent.value = ''
         streamingThinking.value = ''
-        await sendChatRequest({
+        const usage = await sendChatRequest({
           apiBase,
           apiKey,
           model,
@@ -198,6 +214,8 @@ export const useChatStore = defineStore('chat', () => {
             }
           },
         })
+        // 服务商返回 usage 时优先采用；没有返回则保留 null，由下方按字符估算
+        lastUsage = usage ? { ...usage, model, estimated: false } : null
       }
 
       const askMain = () => requestChat({
@@ -213,7 +231,10 @@ export const useChatStore = defineStore('chat', () => {
         secondary: true,
       })
 
-      if (ocrEnabled && hasImages && preferMainVision) {
+      if (options.forceSecondary) {
+        // 手动指定用副模型回答
+        await askSecondary()
+      } else if (ocrEnabled && hasImages && preferMainVision) {
         // 主模型优先处理图片；无法识别或请求失败时才自动切到副模型
         try {
           await askMain()
@@ -234,11 +255,15 @@ export const useChatStore = defineStore('chat', () => {
         notices.push(`主模型「${settings.model}」未能处理图片，已自动切换到副模型「${settings.secondaryModel}」。`)
       }
       const content = notices.length ? `> ${notices.join('\n> ')}\n\n${fullContent}` : fullContent
-      return { content, thinking: fullThinking || undefined }
+      const finalUsage = lastUsage || buildEstimatedUsage(apiMessages, fullContent, attemptedModel)
+      recordUsage(finalUsage)
+      return { content, thinking: fullThinking || undefined, usage: finalUsage }
     } catch (err) {
       if (err.name === 'AbortError') {
         if (fullContent || fullThinking) {
-          return { content: `${fullContent}\n\n*[已中止]*`, thinking: fullThinking || undefined }
+          const finalUsage = lastUsage || buildEstimatedUsage(history, fullContent, attemptedModel)
+          recordUsage(finalUsage)
+          return { content: `${fullContent}\n\n*[已中止]*`, thinking: fullThinking || undefined, usage: finalUsage }
         }
         return null
       }
@@ -274,7 +299,7 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  async function sendMessage(userContent, images = [], documentIds = []) {
+  async function sendMessage(userContent, images = [], documentIds = [], options = {}) {
     const settings = useSettingsStore()
     const { topics, topicId, branch } = ensureConversation()
     if (!topicId) return
@@ -302,6 +327,8 @@ export const useChatStore = defineStore('chat', () => {
       id: newMessageId(),
       role: 'user',
       content: userContent,
+      // 斜杠指令：气泡里展示原始指令文本，实际发送的是转换后的提示词
+      displayContent: options.displayText || undefined,
       images: images.length ? images : undefined,
       ts: Date.now(),
     })
@@ -309,14 +336,27 @@ export const useChatStore = defineStore('chat', () => {
     topics.touchTopic(topicId)
 
     // 自动更新标题
+    const titleSource = options.displayText || userContent
     if (branch.messages.filter(m => m.role === 'user').length === 1) {
-      topics.renameTopic(topicId, userContent.slice(0, 30) + (userContent.length > 30 ? '…' : ''))
+      topics.renameTopic(topicId, titleSource.slice(0, 30) + (titleSource.length > 30 ? '…' : ''))
     }
 
-    // AI 生图技能：命中明确的生图描述时交给副模型出图，不再走普通对话
-    const imagePrompt = settings.imageGenSkillEnabled
-      ? detectImageIntent(userContent, images.length > 0)
-      : ''
+    // AI 生图技能：/画图 指令强制生图；否则仅在命中明确描述时交给副模型出图
+    const forcedImage = options.forceImage === true
+    let imagePrompt = ''
+    if (forcedImage) imagePrompt = String(userContent || '').trim()
+    else if (settings.imageGenSkillEnabled) imagePrompt = detectImageIntent(userContent, images.length > 0)
+    if (forcedImage && !imagePrompt) {
+      branch.messages.push({
+        id: newMessageId(),
+        role: 'assistant',
+        content: '❌ 请在 /画图 后描述你想生成的画面，例如：/画图 一只在月球上晒太阳的橘猫',
+        ts: Date.now(),
+      })
+      saveMessages(topicId)
+      topics.touchTopic(topicId)
+      return
+    }
     if (imagePrompt) {
       if (!settings.secondaryReady) {
         branch.messages.push({
@@ -373,8 +413,10 @@ export const useChatStore = defineStore('chat', () => {
     // 意图不明确时先问一句，不直接发请求；没配 Key 时问了也搜不了，直接提示
     if (intent === 'confirm') {
       if (!String(settings.tavilyApiKey || '').trim()) {
-        searchNotice = '未配置 Tavily API Key，已跳过联网搜索。请在 设置 → 搜索服务 中填写。'
-        window.__ui?.showToast(searchNotice, 'error', 4500)
+        const msg = '未配置 Tavily API Key，已跳过联网搜索。请在 设置 → 搜索服务 中填写。'
+        const fallback = buildSearchFallbackText(userContent)
+        searchNotice = fallback ? `${msg}\n${fallback}` : msg
+        window.__ui?.showToast(msg, 'error', 4500)
       } else {
         pendingSearch.value = { query: userContent, topicId, branchId: branch.id }
         branch.messages.push({
@@ -391,18 +433,22 @@ export const useChatStore = defineStore('chat', () => {
 
     let searchBlock = ''
     if (intent === 'search') {
-      const query = confirmedSearch ? confirmedQuery : userContent
+      const rawQuery = confirmedSearch ? confirmedQuery : userContent
+      // 去掉口语前缀与时间短语，保留 site: / filetype: 等操作符
+      const query = buildSearchQuery(rawQuery) || rawQuery
+      const timeRange = detectTimeRange(rawQuery)
+      const fallbackText = buildSearchFallbackText(rawQuery)
       const apiKey = String(settings.tavilyApiKey || '').trim()
 
       if (!apiKey) {
         const msg = '未配置 Tavily API Key，已跳过联网搜索。请在 设置 → 搜索服务 中填写。'
-        searchNotice = msg
+        searchNotice = fallbackText ? `${msg}\n${fallbackText}` : msg
         window.__ui?.showToast(msg, 'error', 4500)
         if (confirmedSearch) {
           branch.messages.push({
             id: newMessageId(),
             role: 'assistant',
-            content: msg,
+            content: searchNotice,
             ts: Date.now(),
           })
           saveMessages(topicId)
@@ -418,25 +464,29 @@ export const useChatStore = defineStore('chat', () => {
             apiKey,
             depth: settings.searchDepth,
             maxResults: settings.searchMaxResults,
+            timeRange,
           })
         } finally {
           searching.value = false
         }
 
         if (result.ok) {
-          const built = buildSearchContext(query, result)
+          const built = buildSearchContext(query, result, {
+            maxChars: settings.searchMaxChars,
+            itemMaxChars: settings.searchItemMaxChars,
+          })
           searchBlock = built.text
           if (built.truncated) {
-            window.__ui?.showToast('搜索结果较长，已截断至 6000 字后注入', 'info', 3200)
+            window.__ui?.showToast(`搜索结果较长，已截断至 ${built.maxChars} 字后注入`, 'info', 3200)
           }
         } else {
-          searchNotice = result.message
+          searchNotice = fallbackText ? `${result.message}\n${fallbackText}` : result.message
           window.__ui?.showToast(result.message, 'error', 4500)
           if (confirmedSearch) {
             branch.messages.push({
               id: newMessageId(),
               role: 'assistant',
-              content: result.message,
+              content: searchNotice,
               ts: Date.now(),
             })
             saveMessages(topicId)
@@ -455,7 +505,11 @@ export const useChatStore = defineStore('chat', () => {
       id: newMessageId(),
       role: 'assistant',
       thinking: reply.thinking,
-      content: searchNotice ? `> ${searchNotice}\n\n${reply.content}` : reply.content,
+      // 多行提示逐行加引用前缀，避免 Markdown 结构断裂
+      content: searchNotice
+        ? `> ${String(searchNotice).trim().split('\n').join('\n> ')}\n\n${reply.content}`
+        : reply.content,
+      usage: reply.usage,
       ts: Date.now(),
     })
     saveMessages(topicId)
@@ -516,6 +570,8 @@ export const useChatStore = defineStore('chat', () => {
     if (typeof replaceContent === 'string') {
       const last = newBranch.messages[newBranch.messages.length - 1]
       last.content = replaceContent
+      // 编辑后展示新的正文，不再沿用指令原文
+      delete last.displayContent
     }
 
     conv.branches.push(newBranch)
@@ -562,11 +618,11 @@ export const useChatStore = defineStore('chat', () => {
     window.__ui?.showToast(`已编辑并生成「${fork.branch.name}」，原对话保留`, 'success')
   }
 
-  async function regenerateMessage(topicId, branch, msg) {
+  async function regenerateMessage(topicId, branch, msg, options = {}) {
     const idx = branch.messages.indexOf(msg)
     if (idx === -1 || msg.role !== 'assistant') return
 
-    const reply = await generateReply(branch.messages.slice(0, idx))
+    const reply = await generateReply(branch.messages.slice(0, idx), undefined, [], '', options)
     if (!reply) return
 
     const versions = Array.isArray(msg.versions) && msg.versions.length
@@ -585,7 +641,7 @@ export const useChatStore = defineStore('chat', () => {
   /**
    * 重新生成 AI 回复：末条回复原地追加版本；非末条自动派生新分支，避免丢后续消息。
    */
-  async function regenerate(messageId) {
+  async function regenerate(messageId, options = {}) {
     const { topicId, branch } = ensureConversation()
     let target = messageId ? branch.messages.find(m => m.id === messageId) : null
     if (!target) {
@@ -600,11 +656,21 @@ export const useChatStore = defineStore('chat', () => {
       const fork = forkAt(target.id)
       if (!fork) return
       const cloned = fork.branch.messages[fork.branch.messages.length - 1]
-      await regenerateMessage(fork.topicId, fork.branch, cloned)
+      await regenerateMessage(fork.topicId, fork.branch, cloned, options)
       window.__ui?.showToast('已在新分支中重新生成', 'success')
       return
     }
-    await regenerateMessage(topicId, branch, target)
+    await regenerateMessage(topicId, branch, target, options)
+  }
+
+  // 用副模型回答同一条消息，结果作为新版本追加，可随时切回主模型版本
+  async function regenerateWithSecondary(messageId) {
+    const settings = useSettingsStore()
+    if (!settings.secondaryReady) {
+      window.__ui?.showToast('副模型尚未配置，请到 设置 → 模型设置 → 副模型 API 填写', 'error', 4200)
+      return
+    }
+    await regenerate(messageId, { forceSecondary: true })
   }
 
   function setVersion(messageId, index) {
@@ -619,9 +685,34 @@ export const useChatStore = defineStore('chat', () => {
     saveMessages(topicId)
   }
 
-  // 继续生成
+  // 继续生成：续写指令只进入本次请求上下文，不写入会话，界面上不会出现「请继续」
   async function continueResponse() {
-    await sendMessage('请继续。')
+    const { topics, topicId, branch } = ensureConversation()
+    if (!topicId) return
+
+    const last = branch.messages[branch.messages.length - 1]
+    if (!last || last.role !== 'assistant') {
+      // 没有可续写的 AI 消息时保持原行为
+      await sendMessage('请继续。')
+      return
+    }
+
+    const reply = await generateReply([
+      ...branch.messages,
+      { role: 'user', content: '请继续。' },
+    ])
+    if (!reply) return
+
+    branch.messages.push({
+      id: newMessageId(),
+      role: 'assistant',
+      thinking: reply.thinking,
+      content: reply.content,
+      usage: reply.usage,
+      ts: Date.now(),
+    })
+    saveMessages(topicId)
+    topics.touchTopic(topicId)
   }
 
   // 删除单条消息（支持消息 id 或下标）
@@ -644,7 +735,7 @@ export const useChatStore = defineStore('chat', () => {
       const prompt = `请用 3~8 个字概括以下对话的主题，只返回标题，不要加引号或句号。\n用户：${userMsg.slice(0, 100)}\nAI：${aiReply.slice(0, 200)}`
       const controller = new AbortController()
       let title = ''
-      await sendChatRequest({
+      const usage = await sendChatRequest({
         apiBase: settings.apiBase,
         apiKey: settings.apiKey,
         model: settings.model,
@@ -656,6 +747,7 @@ export const useChatStore = defineStore('chat', () => {
         signal: controller.signal,
         onChunk: ({ text }) => { title += text },
       })
+      if (usage) recordUsage({ ...usage, model: settings.model, estimated: false })
       title = title.trim().replace(/[""「」『』《》]/g, '').slice(0, 20)
       if (title) topics.renameTopic(topicId, title)
     } catch { /* 静默失败 */ }
@@ -694,20 +786,30 @@ export const useChatStore = defineStore('chat', () => {
     const externalPrompt = systemPromptRaw || ''
     const persona = settings.personaPrompt || ''
     const userName = settings.userName || ''
+    const userPersona = (settings.userPersona || '').trim()
+    const replyRules = (settings.replyRules || '').trim()
     const personaOn = settings.personaEnabled
 
     const parts = []
     if (personaOn && persona.trim()) {
       // 人设优先：只发人设，忽略系统提示词
       parts.push(persona.trim())
-    } else {
-      // 系统提示词优先（默认）
-      if (externalPrompt.trim()) {
-        parts.push(externalPrompt.trim())
-      }
+    } else if (externalPrompt.trim()) {
+      // 关闭 AI 人设时使用默认的白曦月人设
+      parts.push(externalPrompt.trim())
     }
-    if (userName.trim()) {
-      parts.push(`\n\n【用户信息】\n当前与你对话的用户名叫"${userName.trim()}"，请在交流中使用此名称称呼用户，并以此判断用户身份。`)
+
+    if (userName.trim() || userPersona) {
+      const lines = ['\n\n【用户信息】']
+      if (userName.trim()) {
+        lines.push(`当前与你对话的用户名叫"${userName.trim()}"，请在交流中使用此名称称呼用户，并以此判断用户身份。`)
+      }
+      if (userPersona) lines.push(`用户人设：${userPersona}`)
+      parts.push(lines.join('\n'))
+    }
+
+    if (settings.replyRulesEnabled && replyRules) {
+      parts.push(`\n\n【回复规则】\n${replyRules}`)
     }
 
     // 长期记忆：主记忆未禁用时生效，读取有上限
@@ -721,7 +823,7 @@ export const useChatStore = defineStore('chat', () => {
     conversation, branches, activeBranchId, activeBranch, messages,
     streamingContent, streamingThinking, isLoading, searching, imageGenerating,
     loadMessages, saveMessages, sendMessage, stopGeneration, clearMessages,
-    regenerate, setVersion, branchFromMessage, editAndRegenerate, switchBranch,
+    regenerate, regenerateWithSecondary, setVersion, branchFromMessage, editAndRegenerate, switchBranch,
     continueResponse, deleteMessage, buildSystemPrompt,
   }
 })

@@ -91,6 +91,13 @@
         >
           <i class="fa-solid fa-rotate-right"></i>
         </button>
+        <button
+          class="btn-action"
+          title="用副模型回答（保留主模型版本）"
+          @click="chatStore.regenerateWithSecondary(message.id)"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+        </button>
         <button class="btn-action" @click="branchHere" title="从此处创建分支">
           <i class="fa-solid fa-code-branch"></i>
         </button>
@@ -186,6 +193,7 @@ const fileBlocks = computed(() => {
 })
 
 const displayContent = computed(() => {
+  if (props.message.displayContent) return props.message.displayContent
   if (props.message.role !== 'user') return props.message.content
   return (props.message.content || '').replace(/\[📎 .+?\]\n[\s\S]*?(?=\n\[📎|$)/g, '').trim()
 })

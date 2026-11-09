@@ -65,6 +65,7 @@ function labelOf(key) {
   if (key === 'xiyue_starry_circle_posts') return '圈子帖子'
   if (key === 'xiyue_dream_sessions') return '推演进度'
   if (key === 'xiyue_assets') return '文档列表'
+  if (key === 'xiyue_usage_stats') return '用量统计'
   if (key.startsWith(AUTO_BACKUP_PREFIX)) return `自动备份 ${key.slice(AUTO_BACKUP_PREFIX.length)}`
   return key
 }

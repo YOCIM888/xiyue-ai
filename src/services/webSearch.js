@@ -25,6 +25,29 @@ const PERSONAL_STATE = /(我(很|好|有点|最近)?(难过|开心|累|烦|焦�
 const AFFIRMATIVE = /^(搜|要|要搜|好|可以|嗯|对|查|搜索|搜一下|帮我搜|联网搜|麻烦搜|yes|ok)[吧啊呀。！!，,]*$/i
 const NEGATIVE = /^(不|不用|不搜|别搜|算了|不需要|no)[吧啊呀。！!，,]*$/i
 
+// 搜索失败或无 Key 时的兜底入口（浏览器直连这些页会被 CORS 拦截，只作为可点击链接）
+const FALLBACK_ENGINES = [
+  { name: '必应', url: q => `https://cn.bing.com/search?q=${q}` },
+  { name: '百度', url: q => `https://www.baidu.com/s?wd=${q}` },
+  { name: '360 搜索', url: q => `https://www.so.com/s?q=${q}` },
+  { name: '搜狗', url: q => `https://www.sogou.com/web?query=${q}` },
+]
+
+/** 生成多引擎搜索链接，供搜索失败时用户手动打开 */
+export function buildSearchFallbackLinks(query) {
+  const q = String(query ?? '').trim()
+  if (!q) return []
+  const encoded = encodeURIComponent(q)
+  return FALLBACK_ENGINES.map(e => ({ name: e.name, url: e.url(encoded) }))
+}
+
+/** 多引擎兜底链接的 Markdown 文本 */
+export function buildSearchFallbackText(query) {
+  const links = buildSearchFallbackLinks(query)
+  if (!links.length) return ''
+  return `手动搜索：${links.map(l => `[${l.name}](${l.url})`).join(' · ')}`
+}
+
 /** 判断搜索意图：search 直接搜，confirm 先问一句，none 不搜 */
 export function detectSearchIntent(text) {
   const t = String(text ?? '').trim()
@@ -59,12 +82,18 @@ function truncate(text, max) {
   return s.length > max ? s.slice(0, max) + '…' : s
 }
 
+function clampNumber(value, min, max, fallback) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return fallback
+  return Math.min(max, Math.max(min, Math.round(n)))
+}
+
 function fail(code, message) {
   return { ok: false, code, message, answer: '', results: [] }
 }
 
 /** 调用 Tavily，返回 {ok, answer, results} 或 {ok:false, message} */
-export async function searchWeb(query, { apiKey, depth = 'basic', maxResults = 5, signal } = {}) {
+export async function searchWeb(query, { apiKey, depth = 'basic', maxResults = 5, timeRange = '', signal } = {}) {
   const key = String(apiKey ?? '').trim()
   if (!key) {
     return fail('no-key', '未配置 Tavily API Key，请在 设置 → 搜索服务 中填写')
@@ -80,6 +109,10 @@ export async function searchWeb(query, { apiKey, depth = 'basic', maxResults = 5
     include_answer: true,
     include_raw_content: false,
     chunks_per_source: 2,
+  }
+  // 时间范围由查询构造阶段识别，交给 Tavily 做时间过滤
+  if (['day', 'week', 'month', 'year'].includes(timeRange)) {
+    body.time_range = timeRange
   }
 
   let resp
@@ -138,22 +171,39 @@ export async function searchWeb(query, { apiKey, depth = 'basic', maxResults = 5
 }
 
 /** 把搜索结果拼成注入块，并做总字数截断 */
-export function buildSearchContext(query, data) {
+export function buildSearchContext(query, data, { maxChars = MAX_CHARS, itemMaxChars = MAX_ITEM_CHARS } = {}) {
+  const totalLimit = clampNumber(maxChars, 2000, 30000, MAX_CHARS)
+  const itemLimit = clampNumber(itemMaxChars, 300, 3000, MAX_ITEM_CHARS)
   const lines = [`【联网搜索结果｜原问题：${String(query ?? '').trim()}】`]
   if (data.answer) lines.push(`摘要：${truncate(data.answer, 1500)}`)
 
   data.results.forEach((r, i) => {
     const title = r.title || '（无标题）'
-    lines.push(`[${i + 1}] ${title}\n链接：${r.url || '（无链接）'}\n内容：${r.content || '（无正文摘要）'}`)
+    lines.push(`[${i + 1}] ${title}\n链接：${r.url || '（无链接）'}\n内容：${truncate(r.content, itemLimit) || '（无正文摘要）'}`)
   })
 
-  lines.push('以上为实时搜索结果。请优先结合这些信息回答，并用 [1]、[2] 标注来源；若结果不足或相互矛盾，请明确说明。')
+  // 统计独立域名，帮助模型判断多源佐证强度
+  const domains = new Set()
+  data.results.forEach(r => {
+    try {
+      const host = new URL(r.url).hostname.replace(/^www\./i, '')
+      if (host) domains.add(host)
+    } catch { /* 忽略非法链接 */ }
+  })
+
+  lines.push(
+    `以上为实时搜索结果（共 ${data.results.length} 条，来自 ${domains.size} 个独立域名）。请遵守：\n` +
+    '1. 优先结合这些信息回答，并用 [1]、[2] 标注来源；\n' +
+    '2. 同一结论有两个及以上独立域名支持时更可信；只有一个来源时注明「单一来源，待核实」；\n' +
+    '3. 来源互相矛盾时明确写出分歧，不要强行统一；\n' +
+    '4. 不要编造搜索结果中不存在的链接或事实。'
+  )
 
   let text = lines.join('\n\n')
-  const truncated = text.length > MAX_CHARS
+  const truncated = text.length > totalLimit
   if (truncated) {
     const note = '\n\n…（搜索结果过长已截断）'
-    text = text.slice(0, MAX_CHARS - note.length) + note
+    text = text.slice(0, totalLimit - note.length) + note
   }
-  return { text, truncated, count: data.results.length }
+  return { text, truncated, count: data.results.length, domains: [...domains], maxChars: totalLimit }
 }

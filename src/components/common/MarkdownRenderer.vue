@@ -1,9 +1,9 @@
 <template>
-  <div class="markdown-body" v-html="renderedHtml" @click="onClick"></div>
+  <div ref="rootEl" class="markdown-body" v-html="renderedHtml" @click="onClick"></div>
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { marked } from 'marked'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github-dark.css'
@@ -12,9 +12,18 @@ import { applySymbolStyles } from '../../utils/symbolStyles'
 
 marked.setOptions({ breaks: true, gfm: true })
 
+// 图表代码块：mermaid / echarts，改为占位符，挂载后异步渲染
+const DIAGRAM_LANGS = { mermaid: 'mermaid', echarts: 'echarts', chart: 'echarts' }
+
 const renderer = new marked.Renderer()
 let codeIdx = 0
 renderer.code = function({ text, lang }) {
+  const diagramKind = DIAGRAM_LANGS[String(lang || '').toLowerCase().trim()]
+  if (diagramKind) {
+    return `<div class="diagram-block" data-diagram="${diagramKind}" data-code="${encodeURIComponent(text)}">
+      <div class="diagram-loading">正在渲染图表…</div>
+    </div>`
+  }
   const id = codeIdx++
   const encoded = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
   let highlighted = ''
@@ -51,6 +60,155 @@ const renderedHtml = computed(() => {
     html = props.content.replace(/</g, '&lt;').replace(/\n/g, '<br>')
   }
   return props.symbolStyle ? applySymbolStyles(html, settings.symbolRules) : html
+})
+
+// ---- 图表渲染（按需动态加载，不进首屏包） ----
+const rootEl = ref(null)
+let mermaidApi = null
+let echartsApi = null
+let renderTimer = null
+let mermaidSeq = 0
+const chartInstances = new Map()
+
+async function loadMermaid() {
+  if (!mermaidApi) {
+    const mod = await import('mermaid')
+    mermaidApi = mod.default
+  }
+  return mermaidApi
+}
+
+async function loadECharts() {
+  if (!echartsApi) {
+    const [core, charts, components, renderers] = await Promise.all([
+      import('echarts/core'),
+      import('echarts/charts'),
+      import('echarts/components'),
+      import('echarts/renderers'),
+    ])
+    core.use([
+      charts.LineChart,
+      charts.BarChart,
+      charts.PieChart,
+      charts.ScatterChart,
+      components.GridComponent,
+      components.TooltipComponent,
+      components.LegendComponent,
+      components.TitleComponent,
+      renderers.CanvasRenderer,
+    ])
+    echartsApi = core
+  }
+  return echartsApi
+}
+
+function disposeCharts() {
+  for (const chart of chartInstances.values()) {
+    try { chart.dispose() } catch { /* ignore */ }
+  }
+  chartInstances.clear()
+}
+
+function showDiagramError(container, message, code) {
+  container.innerHTML = ''
+  const wrap = document.createElement('div')
+  wrap.className = 'diagram-error'
+  const title = document.createElement('div')
+  title.textContent = `图表渲染失败：${message || '配置有误'}`
+  const pre = document.createElement('pre')
+  pre.textContent = code
+  wrap.append(title, pre)
+  container.append(wrap)
+  container.dataset.rendered = 'error'
+}
+
+async function renderOne(container) {
+  if (!container || container.dataset.rendered) return
+  const kind = container.dataset.diagram
+  const code = decodeURIComponent(container.dataset.code || '')
+  if (!code.trim()) return
+  container.dataset.rendered = 'pending'
+  try {
+    if (kind === 'mermaid') {
+      const mermaid = await loadMermaid()
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: settings.darkMode ? 'dark' : 'default',
+        securityLevel: 'strict',
+        fontFamily: 'inherit',
+      })
+      const { svg } = await mermaid.render(`xiyue-mermaid-${++mermaidSeq}`, code)
+      container.innerHTML = svg
+      container.dataset.rendered = 'ok'
+    } else {
+      const echarts = await loadECharts()
+      let option
+      try { option = JSON.parse(code) } catch { throw new Error('JSON 配置无法解析') }
+      if (!option || typeof option !== 'object') throw new Error('配置必须是对象')
+      if (!option.backgroundColor) option.backgroundColor = 'transparent'
+      const chartEl = document.createElement('div')
+      chartEl.className = 'diagram-echarts'
+      container.innerHTML = ''
+      container.append(chartEl)
+      const chart = echarts.init(chartEl, settings.darkMode ? 'dark' : undefined, { renderer: 'canvas' })
+      chart.setOption(option)
+      chartInstances.set(chartEl, chart)
+      container.dataset.rendered = 'ok'
+    }
+  } catch (err) {
+    showDiagramError(container, err?.message || String(err), code)
+  }
+}
+
+async function renderDiagrams() {
+  const root = rootEl.value
+  if (!root) return
+  for (const [el, chart] of chartInstances) {
+    if (!root.contains(el)) {
+      try { chart.dispose() } catch { /* ignore */ }
+      chartInstances.delete(el)
+    }
+  }
+  for (const node of root.querySelectorAll('.diagram-block')) {
+    if (!node.dataset.rendered) await renderOne(node)
+  }
+}
+
+function scheduleRender() {
+  if (renderTimer) clearTimeout(renderTimer)
+  renderTimer = setTimeout(() => {
+    renderTimer = null
+    renderDiagrams()
+  }, 180)
+}
+
+function resetDiagrams() {
+  const root = rootEl.value
+  if (!root) return
+  disposeCharts()
+  root.querySelectorAll('.diagram-block').forEach(el => {
+    delete el.dataset.rendered
+    el.innerHTML = '<div class="diagram-loading">正在渲染图表…</div>'
+  })
+  renderDiagrams()
+}
+
+function onWindowResize() {
+  chartInstances.forEach(chart => { try { chart.resize() } catch { /* ignore */ } })
+}
+
+watch(renderedHtml, () => nextTick(scheduleRender))
+watch(() => settings.darkMode, () => nextTick(resetDiagrams))
+
+onMounted(() => {
+  window.addEventListener('resize', onWindowResize)
+  nextTick(scheduleRender)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', onWindowResize)
+  if (renderTimer) clearTimeout(renderTimer)
+  disposeCharts()
 })
 
 function onClick(e) {
@@ -252,4 +410,33 @@ function onClick(e) {
 :root:not([data-theme="dark"]) .markdown-body .hljs-strong { color: #24292e; font-weight: bold; }
 :root:not([data-theme="dark"]) .markdown-body .hljs-addition { color: #22863a; background-color: #f0fff4; }
 :root:not([data-theme="dark"]) .markdown-body .hljs-deletion { color: #b31d28; background-color: #ffeef0; }
+
+/* 图表块：mermaid / echarts */
+.diagram-block {
+  margin: 10px 0;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-card);
+  overflow-x: auto;
+}
+.diagram-block svg { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+.diagram-echarts { width: 100%; height: 320px; }
+.diagram-loading { padding: 10px; text-align: center; font-size: 12px; color: var(--text-muted); }
+.markdown-body .diagram-error { font-size: 12px; color: var(--danger); line-height: 1.6; }
+.markdown-body .diagram-error pre {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-code);
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+}
+@media (max-width: 768px) {
+  .diagram-block { padding: 8px; }
+  .diagram-echarts { height: 260px; }
+}
 </style>

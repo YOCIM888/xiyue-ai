@@ -49,19 +49,37 @@ async function openaiChat({ apiBase, apiKey, model, temperature, maxTokens, topP
     : Math.max(1, Math.min(maxTokens || 4096, 393216))
   const safeTopP = isBigModel ? Math.max(0.01, Math.min(topP ?? 0.95, 1)) : topP
 
-  const body = { model, messages, temperature: safeTemperature, max_tokens: safeMaxTokens, top_p: safeTopP, stream: true }
+  const body = {
+    model,
+    messages,
+    temperature: safeTemperature,
+    max_tokens: safeMaxTokens,
+    top_p: safeTopP,
+    stream: true,
+    stream_options: { include_usage: true },
+  }
   if (model.startsWith('deepseek') || apiBase.includes('deepseek')) {
     body.thinking = { type: thinkingEnabled ? 'enabled' : 'disabled' }
   }
   const headers = { 'Content-Type': 'application/json' }
   if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
 
-  const resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal })
+  const send = () => fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal })
+  let resp = await send()
+  // 少数中转服务不认识 stream_options，去掉后重试一次，避免整个请求失败
+  if (!resp.ok && resp.status === 400) {
+    const detail = await resp.clone().text().catch(() => '')
+    if (/stream_options/i.test(detail)) {
+      delete body.stream_options
+      resp = await send()
+    }
+  }
   if (!resp.ok) throw new Error(await errFromResp(resp))
 
   const reader = resp.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+  let usage = null
 
   while (true) {
     const { done, value } = await reader.read()
@@ -73,9 +91,14 @@ async function openaiChat({ apiBase, apiKey, model, temperature, maxTokens, topP
       const t = line.trim()
       if (!t || !t.startsWith('data:')) continue
       const data = t.slice(5).trim()
-      if (data === '[DONE]') return
+      if (data === '[DONE]') return usage
       try {
         const j = JSON.parse(data)
+        if (j.usage) {
+          const prompt = Number(j.usage.prompt_tokens) || 0
+          const completion = Number(j.usage.completion_tokens) || 0
+          usage = { prompt, completion, total: Number(j.usage.total_tokens) || prompt + completion }
+        }
         const delta = j.choices?.[0]?.delta
         if (delta?.reasoning_content) {
           onChunk({ type: 'thinking', text: delta.reasoning_content })
@@ -85,6 +108,7 @@ async function openaiChat({ apiBase, apiKey, model, temperature, maxTokens, topP
       } catch { /* skip */ }
     }
   }
+  return usage
 }
 
 /** Ollama 原生格式 (NDJSON) */
@@ -118,6 +142,7 @@ async function ollamaChat({ apiBase, model, temperature, maxTokens, contextLengt
   const reader = resp.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+  let usage = null
   let inThink = false
   const TAG_OPEN = '<think>'
   const TAG_CLOSE = '</think>'
@@ -139,7 +164,12 @@ async function ollamaChat({ apiBase, model, temperature, maxTokens, contextLengt
       if (!t) continue
       try {
         const j = JSON.parse(t)
-        if (j.done) return
+        if (j.done) {
+          const prompt = Number(j.prompt_eval_count) || 0
+          const completion = Number(j.eval_count) || 0
+          if (prompt || completion) usage = { prompt, completion, total: prompt + completion }
+          return usage
+        }
 
         // 新版 Ollama 可能将思考内容放在独立字段
         const think = j.message?.thinking || j.message?.thinking_content
@@ -184,6 +214,7 @@ async function ollamaChat({ apiBase, model, temperature, maxTokens, contextLengt
       } catch { /* skip */ }
     }
   }
+  return usage
 }
 
 /**

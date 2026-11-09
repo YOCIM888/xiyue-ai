@@ -33,6 +33,29 @@
 
     <!-- 输入卡片 -->
     <div class="input-card">
+      <!-- 斜杠指令面板 -->
+      <div v-if="slashOpen && slashMatches.length" ref="slashPanelRef" class="slash-panel" @mousedown.prevent>
+        <div class="slash-head">
+          <span>快捷指令</span>
+          <span class="slash-keys">↑↓ 选择 · Enter 使用 · Esc 关闭</span>
+        </div>
+        <div class="slash-list">
+          <button
+            v-for="(cmd, i) in slashMatches"
+            :key="cmd.id"
+            class="slash-item"
+            :class="{ active: i === slashIndex }"
+            @click="applySlash(cmd)"
+            @mouseenter="slashIndex = i"
+          >
+            <span class="slash-cmd">{{ cmd.command }}</span>
+            <span class="slash-desc">{{ cmd.desc }}</span>
+            <span v-if="cmd.needsArg" class="slash-tag">需描述</span>
+          </button>
+        </div>
+        <div v-if="activeSlash" class="slash-foot">示例：{{ activeSlash.command }} {{ activeSlash.example }}</div>
+      </div>
+
       <div class="input-top">
         <textarea ref="textareaRef" v-model="input" class="chat-input"
           :placeholder="placeholder"
@@ -60,21 +83,16 @@
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             <span>搜索</span>
           </button>
-          <button class="tool-btn" @click="triggerImageUpload" title="上传图片">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-            <span>图片</span>
-          </button>
-          <input ref="imgInputRef" type="file" accept="image/*" style="display:none" @change="handleImageUpload" />
-          <button class="tool-btn" @click="triggerFileUpload" title="上传文件">
+          <button class="tool-btn" @click="triggerFileUpload" title="上传图片或文件">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
             <span>文件</span>
           </button>
-          <input ref="fileInputRef" type="file" accept=".txt,.md,.json,.docx,.csv,.log" style="display:none" @change="handleFileUpload" />
-          <button v-if="settings.documentSkillEnabled" class="tool-btn" :class="{ active: showDocPicker }"
-            @click="showDocPicker = !showDocPicker" title="从我的文档选择文件">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
-            <span>文档</span>
+          <button ref="slashBtnRef" class="tool-btn" :class="{ active: slashOpen }"
+            @click="toggleSlashPanel" title="快捷指令：总结、翻译、润色、画图等">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+            <span>指令</span>
           </button>
+          <input ref="fileInputRef" type="file" :accept="FILE_ACCEPT" style="display:none" @change="handleFilePicked" />
         </div>
         <ContextRing class="input-ctx" :used="contextUsed" :limit="contextLimit" align="right" pop-direction="up" :size="22" />
       </div>
@@ -83,13 +101,14 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
 import { useAssetsStore } from '../../stores/assets'
 import { useChatStore } from '../../stores/chat'
 import { compressImageDataUrl, OCR_IMAGE_OPTIONS } from '../../utils/image'
 import { estimateMessagesTokens } from '../../utils/contextUsage'
 import ContextRing from '../common/ContextRing.vue'
+import { matchSlashCommands, parseSlashInput, SLASH_COMMANDS } from '../../services/slashCommands'
 import mammoth from 'mammoth'
 
 const DOC_MAX_SELECTION = 3
@@ -114,7 +133,6 @@ const contextLimit = computed(() => settings.contextLength || 131072)
 const input = ref('')
 const textareaRef = ref(null)
 const fileInputRef = ref(null)
-const imgInputRef = ref(null)
 const attachments = ref([])
 const showDocPicker = ref(false)
 const availableDocs = computed(() => assetsStore.sorted.filter(a => (a.content || '').trim()))
@@ -124,8 +142,72 @@ const MOBILE_UA = /Android|iPhone|iPad|iPod|webOS/i.test(navigator.userAgent)
 const isLoading = computed(() => props.isLoading)
 const placeholder = computed(() => {
   if (isLoading.value) return 'AI 正在回复中…'
-  return '输入消息…'
+  return '输入消息… '
 })
+
+// ---- 斜杠快捷指令 ----
+const slashBtnRef = ref(null)
+const slashPanelRef = ref(null)
+const slashOpen = ref(false)
+const slashIndex = ref(0)
+const slashMatches = computed(() => {
+  if (!slashOpen.value) return []
+  const text = input.value
+  // 按钮打开时（输入为空或已是完整指令）展示全部，便于手机端点选
+  if (!text.startsWith('/') || /\s/.test(text)) return SLASH_COMMANDS
+  return matchSlashCommands(text)
+})
+const activeSlash = computed(() => slashMatches.value[slashIndex.value] || slashMatches.value[0] || null)
+
+watch(input, () => {
+  const text = input.value
+  if (text.startsWith('/')) {
+    slashOpen.value = matchSlashCommands(text).length > 0
+  } else if (text.trim()) {
+    // 只有真正输入普通内容时才关闭，避免按钮打开后被输入框清空动作误关
+    slashOpen.value = false
+  }
+  if (slashIndex.value > slashMatches.value.length - 1) slashIndex.value = 0
+})
+
+function toggleSlashPanel() {
+  slashOpen.value = !slashOpen.value
+  slashIndex.value = 0
+  if (slashOpen.value) nextTick(() => textareaRef.value?.focus())
+}
+
+function applySlash(cmd) {
+  if (!cmd) return
+  // /文档 直接打开文档选择器，不填充输入框
+  if (cmd.id === 'document') {
+    slashOpen.value = false
+    slashIndex.value = 0
+    openDocPicker()
+    return
+  }
+  // 已有普通文字时作为指令参数保留；已有指令则直接替换
+  const existing = input.value.trim()
+  const rest = existing.startsWith('/') ? '' : existing
+  input.value = rest ? `${cmd.command} ${rest}` : `${cmd.command} `
+  slashOpen.value = false
+  slashIndex.value = 0
+  nextTick(() => {
+    const el = textareaRef.value
+    if (!el) return
+    el.focus()
+    el.setSelectionRange(el.value.length, el.value.length)
+    autoResize()
+  })
+}
+
+function onDocumentMousedown(e) {
+  if (!slashOpen.value) return
+  if (slashPanelRef.value?.contains(e.target) || slashBtnRef.value?.contains(e.target)) return
+  slashOpen.value = false
+}
+
+onMounted(() => document.addEventListener('mousedown', onDocumentMousedown))
+onUnmounted(() => document.removeEventListener('mousedown', onDocumentMousedown))
 
 function autoResize() {
   nextTick(() => {
@@ -137,6 +219,31 @@ function autoResize() {
 }
 
 function handleKeydown(e) {
+  // 指令面板打开时优先处理选择操作
+  if (slashOpen.value && slashMatches.value.length) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      slashIndex.value = (slashIndex.value + 1) % slashMatches.value.length
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      slashIndex.value = (slashIndex.value - 1 + slashMatches.value.length) % slashMatches.value.length
+      return
+    }
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      if (e.isComposing || e.keyCode === 229) return
+      e.preventDefault()
+      applySlash(activeSlash.value)
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      slashOpen.value = false
+      return
+    }
+  }
+
   if (e.key !== 'Enter') return
   // 中文输入法候选确认时的 Enter 不当作发送
   if (e.isComposing || e.keyCode === 229) return
@@ -155,24 +262,55 @@ function isMobileInput() {
 
 function send() {
   if (!canSend.value) return
-  let full = input.value.trim() || ''
+  let text = input.value.trim() || ''
+  let forceImage = false
+  let displayText = ''
 
-  // 文件附件
-  const okFiles = attachments.value.filter(a => a.type === 'file' && a.status === 'ok' && a.text)
-  if (okFiles.length) {
-    const texts = okFiles.map(f => `[📎 ${f.name}]\n${f.text.slice(0, 20000)}`).join('\n\n')
-    full = full ? texts + '\n\n' + full : texts
+  // 斜杠指令：转换为实际提示词；/画图 强制走生图分支
+  const parsed = parseSlashInput(text)
+  if (parsed) {
+    displayText = parsed.display
+    if (parsed.command.id === 'document') {
+      openDocPicker()
+      input.value = ''
+      return
+    }
+    if (parsed.forceImage) {
+      if (!parsed.arg) {
+        window.__ui?.showToast('请在 /画图 后描述你想生成的画面', 'info', 3200)
+        return
+      }
+      forceImage = true
+      text = parsed.arg
+    } else {
+      text = parsed.payload
+    }
+  }
+
+  // 文件附件（生图指令不拼接附件正文）
+  if (!forceImage) {
+    const okFiles = attachments.value.filter(a => a.type === 'file' && a.status === 'ok' && a.text)
+    if (okFiles.length) {
+      const texts = okFiles.map(f => `[📎 ${f.name}]\n${f.text.slice(0, 20000)}`).join('\n\n')
+      text = text ? texts + '\n\n' + text : texts
+    }
   }
 
   // 文档解析附件：正文由 chat store 在注入阶段读取，这里只传文档 id
   const okDocs = attachments.value.filter(a => a.type === 'doc' && a.status === 'ok')
-  if (okDocs.length && !full) full = '请阅读我选择的文档。'
+  if (!forceImage && okDocs.length && !text) text = '请阅读我选择的文档。'
 
   // 图片附件
   const okImages = attachments.value.filter(a => a.type === 'image' && a.status === 'ok' && a.dataUrl)
   // 不在文本中拼图片标记
 
-  emit('send', { text: full, images: okImages.map(i => i.dataUrl), documentIds: okDocs.map(a => a.assetId) })
+  emit('send', {
+    text,
+    images: forceImage ? [] : okImages.map(i => i.dataUrl),
+    documentIds: okDocs.map(a => a.assetId),
+    forceImage,
+    displayText,
+  })
   input.value = ''
   attachments.value = []
   nextTick(autoResize)
@@ -180,6 +318,14 @@ function send() {
 
 function isDocSelected(id) {
   return attachments.value.some(a => a.type === 'doc' && a.assetId === id)
+}
+
+function openDocPicker() {
+  if (!settings.documentSkillEnabled) {
+    window.__ui?.showToast('文档功能未开启，请到 技能管理 打开「文档解析」', 'info', 3600)
+    return
+  }
+  showDocPicker.value = true
 }
 
 function pickDoc(doc) {
@@ -207,12 +353,38 @@ function toggleForceSearch() {
   settings.forceSearch = !settings.forceSearch
 }
 
-// ---- 图片上传 ----
-function triggerImageUpload() { imgInputRef.value?.click() }
-async function handleImageUpload(e) {
+// ---- 图片 / 文件上传（统一入口，按文件类型分派） ----
+function triggerFileUpload() { fileInputRef.value?.click() }
+
+async function handleFilePicked(e) {
   const file = e.target.files?.[0]
   e.target.value = ''
   if (!file) return
+  if (isImageFile(file)) {
+    await addImageFile(file)
+    return
+  }
+  await addTextFile(file)
+}
+
+const IMAGE_EXT = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp']
+
+function isImageFile(file) {
+  if (file.type.startsWith('image/')) return true
+  // 少数系统不提供 MIME，按扩展名兜底
+  return IMAGE_EXT.includes(file.name.split('.').pop()?.toLowerCase())
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = ev => resolve(ev.target.result)
+    reader.onerror = () => reject(new Error('读取图片失败'))
+    reader.readAsDataURL(file)
+  })
+}
+
+async function addImageFile(file) {
   if (settings.ocrSkillEnabled && attachments.value.filter(a => a.type === 'image').length >= OCR_MAX_UPLOAD) {
     window.__ui?.showToast(`开启图片理解时单次最多 ${OCR_MAX_UPLOAD} 张图片`, 'info', 3000)
     return
@@ -234,24 +406,28 @@ async function handleImageUpload(e) {
   }
 }
 
-function readFileAsDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = ev => resolve(ev.target.result)
-    reader.onerror = () => reject(new Error('读取图片失败'))
-    reader.readAsDataURL(file)
-  })
-}
+// 可作为纯文本读取的代码/文档后缀
+const TEXT_FILE_EXT = [
+  // 文本与数据
+  'txt', 'md', 'markdown', 'json', 'jsonc', 'csv', 'tsv', 'log', 'xml', 'svg', 'yml', 'yaml', 'toml', 'ini', 'env', 'sql',
+  // 网页前端
+  'html', 'htm', 'css', 'scss', 'sass', 'less', 'js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'vue', 'svelte',
+  // 脚本与后端
+  'sh', 'bash', 'bat', 'ps1', 'py', 'java', 'c', 'h', 'cpp', 'hpp', 'cc', 'cs', 'go', 'rs', 'php', 'rb', 'kt', 'swift',
+]
 
-// ---- 文件上传 ----
-function triggerFileUpload() { fileInputRef.value?.click() }
-async function handleFileUpload(e) {
-  const file = e.target.files?.[0]
-  if (!file) return
+// 文件选择器允许的类型：图片 + docx + 所有文本类后缀
+const FILE_ACCEPT = ['image/*', '.docx', ...TEXT_FILE_EXT.map(ext => `.${ext}`)].join(',')
+
+async function addTextFile(file) {
+  const ext = file.name.split('.').pop()?.toLowerCase()
+  if (ext !== 'docx' && !TEXT_FILE_EXT.includes(ext)) {
+    window.__ui?.showToast('暂不支持该文件格式，可先导入「我的文档」再选择', 'info', 3600)
+    return
+  }
   const idx = attachments.value.length
   attachments.value.push({ type: 'file', name: file.name, status: 'loading', text: '' })
   try {
-    const ext = file.name.split('.').pop()?.toLowerCase()
     let text = ''
     if (ext === 'docx') {
       const buf = await file.arrayBuffer()
@@ -263,7 +439,6 @@ async function handleFileUpload(e) {
   } catch {
     attachments.value[idx] = { type: 'file', name: file.name, status: 'fail', text: '' }
   }
-  e.target.value = ''
 }
 
 defineExpose({ focus: () => textareaRef.value?.focus() })
@@ -331,6 +506,7 @@ defineExpose({ focus: () => textareaRef.value?.focus() })
 
 /* 输入卡片 */
 .input-card {
+  position: relative;
   background: var(--bg-input);
   border: 1px solid var(--border-color);
   border-radius: 20px;
@@ -389,5 +565,88 @@ defineExpose({ focus: () => textareaRef.value?.focus() })
 @media (max-width: 768px) {
   .chat-input-container { padding: 8px 10px 12px; }
   .tool-btn { padding: 5px 7px; }
+}
+
+/* 斜杠指令面板 */
+.slash-panel {
+  position: absolute;
+  left: -1px;
+  right: -1px;
+  bottom: calc(100% + 8px);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  max-height: 300px;
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  background: var(--bg-card);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.16);
+  overflow: hidden;
+}
+.slash-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.slash-keys { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+.slash-list { overflow-y: auto; }
+.slash-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.slash-item:hover,
+.slash-item.active { background: var(--bg-hover); }
+.slash-cmd {
+  flex-shrink: 0;
+  min-width: 62px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.slash-desc {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.slash-tag {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: var(--accent-light);
+  color: var(--accent);
+  font-size: 10px;
+}
+.slash-foot {
+  padding: 8px 12px;
+  border-top: 1px solid var(--border-color);
+  color: var(--text-muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 768px) {
+  .slash-panel { max-height: 260px; }
+  .slash-keys { display: none; }
+  .slash-cmd { min-width: 54px; }
 }
 </style>

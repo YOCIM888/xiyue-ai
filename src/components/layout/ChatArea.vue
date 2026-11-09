@@ -83,7 +83,9 @@ function handleSend(data) {
   const text = typeof data === 'string' ? data : data.text
   const images = typeof data === 'string' ? [] : (data.images || [])
   const documentIds = typeof data === 'string' ? [] : (data.documentIds || [])
-  chatStore.sendMessage(text, images, documentIds)
+  const forceImage = typeof data === 'string' ? false : !!data.forceImage
+  const displayText = typeof data === 'string' ? '' : (data.displayText || '')
+  chatStore.sendMessage(text, images, documentIds, { forceImage, displayText })
 }
 
 // 暴露给 TopBar：点击 LOGO 滚到顶部
