@@ -44,9 +44,34 @@
                 <span class="work-progress">{{ progressText(work.id) }}</span>
               </div>
               <p class="work-desc">{{ work.description }}</p>
+              <p v-if="store.progressSummary(work.id)" class="work-last">
+                上次：{{ store.progressSummary(work.id) }}
+              </p>
               <div class="work-foot">
                 <span class="work-meta">{{ work.meta }}</span>
                 <span class="work-cta">{{ progressText(work.id) === '未开始' ? '开始推演' : '继续推演' }} →</span>
+              </div>
+            </div>
+            <span
+              v-if="work.custom"
+              class="work-delete"
+              title="删除这个自定义作品"
+              @click.stop="deleteCustomWork(work)"
+            >×</span>
+          </button>
+
+          <button class="work-card create-card" @click="openCreate">
+            <div class="work-cover create-cover">
+              <span class="create-plus">＋</span>
+            </div>
+            <div class="work-info">
+              <div class="work-title-row">
+                <span class="work-title">新建作品</span>
+              </div>
+              <p class="work-desc">自定义世界观、主角、开场与初始选项。</p>
+              <div class="work-foot">
+                <span class="work-meta">本地创建 · 多线走向</span>
+                <span class="work-cta">开始创作 →</span>
               </div>
             </div>
           </button>
@@ -55,22 +80,69 @@
         <p class="coming-hint">更多作品正在推演中，敬请期待。</p>
       </div>
     </div>
+
+    <div v-if="createOpen" class="dream-modal-overlay" @click.self="createOpen = false">
+      <div class="dream-modal">
+        <div class="dm-head">
+          <h3>新建作品</h3>
+          <button @click="createOpen = false">×</button>
+        </div>
+        <div class="dm-body">
+          <div class="dm-field">
+            <label>作品标题</label>
+            <input v-model="form.title" type="text" maxlength="20" placeholder="例如：雾港来信" />
+          </div>
+          <div class="dm-field">
+            <label>一句话简介</label>
+            <input v-model="form.description" type="text" maxlength="120" placeholder="留空则从世界设定中截取" />
+          </div>
+          <div class="dm-field">
+            <label>世界设定与主角</label>
+            <textarea v-model="form.setting" rows="5" placeholder="世界背景、主角身份、重要人物、当前处境、基调…"></textarea>
+          </div>
+          <div class="dm-field">
+            <label>开场剧情</label>
+            <textarea v-model="form.opening" rows="5" placeholder="故事从哪一刻开始？"></textarea>
+          </div>
+          <div class="dm-field">
+            <label>初始三个选项（每行一个）</label>
+            <textarea v-model="form.optionsText" rows="3" placeholder="观察四周\n寻找可以交谈的人\n立刻离开这里"></textarea>
+          </div>
+          <div class="dm-field">
+            <label>叙事风格</label>
+            <input v-model="form.voice" type="text" maxlength="80" placeholder="例如：冷峻克制的悬疑笔调" />
+          </div>
+        </div>
+        <div class="dm-actions">
+          <button class="btn-secondary" @click="createOpen = false">取消</button>
+          <button class="btn-primary" @click="saveWork">创建并进入</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import DreamStage from './DreamStage.vue'
-import { DREAM_WORKS } from '../../services/dream'
 import { useDreamStore } from '../../stores/dream'
 
 const router = useRouter()
 const store = useDreamStore()
 
-const works = DREAM_WORKS
+const works = computed(() => store.allWorks)
 const playing = ref(false)
 const activeWork = ref(null)
+const createOpen = ref(false)
+const form = reactive({
+  title: '',
+  description: '',
+  setting: '',
+  opening: '',
+  optionsText: '',
+  voice: '',
+})
 
 onMounted(() => {
   store.setLoading(false)
@@ -85,6 +157,45 @@ function enterWork(work) {
   store.openWork(work.id)
   activeWork.value = work
   playing.value = true
+}
+
+function openCreate() {
+  createOpen.value = true
+}
+
+function saveWork() {
+  const options = form.optionsText
+    .split('\n')
+    .map(item => item.trim())
+    .filter(Boolean)
+  const work = store.createWork({
+    title: form.title,
+    description: form.description,
+    setting: form.setting,
+    opening: form.opening,
+    openingOptions: options,
+    voice: form.voice,
+  })
+  if (!work) return
+  createOpen.value = false
+  form.title = ''
+  form.description = ''
+  form.setting = ''
+  form.opening = ''
+  form.optionsText = ''
+  form.voice = ''
+  window.__ui?.showToast('作品已创建', 'success', 2000)
+  enterWork(work)
+}
+
+async function deleteCustomWork(work) {
+  const ok = await window.__ui?.showConfirm(`删除自定义作品《${work.title}》？它的推演进度也会一并删除。`, {
+    confirmText: '删除',
+    cancelText: '取消',
+  })
+  if (!ok) return
+  store.removeCustomWork(work.id)
+  window.__ui?.showToast('自定义作品已删除', 'success', 2000)
 }
 
 function exitDream() {
@@ -205,11 +316,143 @@ function exitDream() {
   text-align: left;
   transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
   box-shadow: 0 1px 5px rgba(0, 0, 0, 0.04);
+  position: relative;
 }
 .work-card:hover {
   border-color: var(--accent);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
   transform: translateY(-1px);
+}
+.work-last {
+  margin: 5px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.work-delete {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+.work-card:hover .work-delete { opacity: 1; }
+.work-delete:hover { background: var(--danger-bg); color: var(--danger); }
+.create-card { border-style: dashed; }
+.create-cover {
+  background: var(--bg-sidebar);
+  color: var(--accent);
+}
+.create-plus { font-size: 34px; font-weight: 300; line-height: 1; }
+
+.dream-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.dream-modal {
+  width: 620px;
+  max-width: 100%;
+  max-height: 90dvh;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  background: var(--bg-primary);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.22);
+  overflow: hidden;
+}
+.dm-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border-color);
+}
+.dm-head h3 { margin: 0; font-size: 15px; color: var(--text-primary); }
+.dm-head button {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 18px;
+  cursor: pointer;
+}
+.dm-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 18px;
+}
+.dm-field { margin-bottom: 12px; }
+.dm-field label {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.dm-field input,
+.dm-field textarea {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1.6;
+  outline: none;
+  box-sizing: border-box;
+  resize: vertical;
+}
+.dm-field input:focus,
+.dm-field textarea:focus { border-color: var(--accent); }
+.dm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border-color);
+}
+.btn-primary {
+  padding: 9px 16px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.btn-secondary {
+  padding: 9px 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+@media (max-width: 768px) {
+  .work-delete { opacity: 0.7; }
 }
 
 .work-cover {

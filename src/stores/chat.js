@@ -7,8 +7,6 @@ import { useAssetsStore } from './assets'
 import { sendChatRequest } from '../services/api'
 import { attachLinkContext, appendContextToLastUser } from '../services/linkReader'
 import {
-  detectSearchIntent,
-  detectSearchReply,
   searchWeb,
   buildSearchContext,
   buildSearchFallbackText,
@@ -36,6 +34,8 @@ import {
   cloneMessagesForFork,
 } from '../utils/conversation'
 import { buildMainChatMemoryContext } from '../utils/memoryContext'
+import { buildToolPrompt, extractToolCalls, executeToolCall, stripToolBlocks } from '../services/tools'
+import { exportConversation, printConversation } from '../services/conversationExport'
 // 系统提示词文件（Vite 构建时内联，零延迟）
 import systemPromptRaw from '../../public/prompt/system.md?raw'
 
@@ -48,8 +48,7 @@ export const useChatStore = defineStore('chat', () => {
   const searching = ref(false)
   const imageGenerating = ref(false)
   const abortController = ref(null)
-  // 等待用户确认「要不要联网搜索」的原问题
-  const pendingSearch = ref(null)
+  let autoDistillRunning = false
 
   const branches = computed(() => conversation.value?.branches || [])
   const activeBranch = computed(() =>
@@ -58,7 +57,6 @@ export const useChatStore = defineStore('chat', () => {
   const messages = computed(() => activeBranch.value?.messages || [])
 
   function loadMessages(topicId) {
-    pendingSearch.value = null
     if (!topicId) {
       conversation.value = createConversation()
       activeBranchId.value = 'b-main'
@@ -109,6 +107,37 @@ export const useChatStore = defineStore('chat', () => {
     return { prompt, completion, total: prompt + completion, model: model || '未知模型', estimated: true }
   }
 
+  function sumUsage(list, model) {
+    const prompt = list.reduce((acc, u) => acc + (Number(u?.prompt) || 0), 0)
+    const completion = list.reduce((acc, u) => acc + (Number(u?.completion) || 0), 0)
+    return {
+      prompt,
+      completion,
+      total: prompt + completion,
+      model: list[list.length - 1]?.model || model || '未知模型',
+      estimated: list.some(u => u?.estimated),
+    }
+  }
+
+  // 工具调用产生的导出动作：等最终回答入列后再执行
+  function handlePendingExport(reply, branch, topics) {
+    if (!reply?.pendingExport) return
+    try {
+      const settings = useSettingsStore()
+      const payload = {
+        title: topics.currentTopic?.title || '对话导出',
+        messages: branch.messages,
+        userName: settings.userName,
+      }
+      if (reply.pendingExport === 'pdf') printConversation(payload)
+      else exportConversation({ format: reply.pendingExport, ...payload })
+      window.__ui?.showToast('对话已导出', 'success')
+    } catch (err) {
+      console.error('[export] 工具调用导出失败', err)
+      window.__ui?.showToast(`导出失败：${err?.message || '未知错误'}`, 'error', 4200)
+    }
+  }
+
   async function generateReply(history, linkText, documentIds = [], searchBlock = '', options = {}) {
     const settings = useSettingsStore()
     const ocrEnabled = !!settings.ocrSkillEnabled
@@ -137,7 +166,7 @@ export const useChatStore = defineStore('chat', () => {
 
     let fullContent = ''
     let fullThinking = ''
-    let lastUsage = null
+    const usageList = []
     let imageNotice = ''
     let attemptedModel = useSecondary ? settings.secondaryModel : settings.model
     let attemptedSecondary = useSecondary
@@ -186,7 +215,7 @@ export const useChatStore = defineStore('chat', () => {
       }
 
       // 每次尝试前清空流式内容，避免上一次失败的半截输出混进结果
-      const requestChat = async ({ apiBase, apiKey, model, secondary }) => {
+      const requestChat = async ({ apiBase, apiKey, model, secondary, messages = apiMessages }) => {
         attemptedModel = model
         attemptedSecondary = secondary
         fullContent = ''
@@ -202,7 +231,7 @@ export const useChatStore = defineStore('chat', () => {
           contextLength: settings.contextLength,
           topP: settings.topP,
           thinkingEnabled: settings.thinkingEnabled,
-          messages: apiMessages,
+          messages,
           signal: controller.signal,
           onChunk: ({ type, text }) => {
             if (type === 'thinking') {
@@ -215,20 +244,23 @@ export const useChatStore = defineStore('chat', () => {
           },
         })
         // 服务商返回 usage 时优先采用；没有返回则保留 null，由下方按字符估算
-        lastUsage = usage ? { ...usage, model, estimated: false } : null
+        const usageEntry = usage ? { ...usage, model, estimated: false } : null
+        if (usageEntry) usageList.push(usageEntry)
       }
 
-      const askMain = () => requestChat({
+      const askMain = (messages = apiMessages) => requestChat({
         apiBase: settings.apiBase,
         apiKey: settings.apiKey,
         model: settings.model,
         secondary: false,
+        messages,
       })
-      const askSecondary = () => requestChat({
+      const askSecondary = (messages = apiMessages) => requestChat({
         apiBase: settings.secondaryApiBase,
         apiKey: settings.secondaryApiKey,
         model: settings.secondaryModel,
         secondary: true,
+        messages,
       })
 
       if (options.forceSecondary) {
@@ -249,21 +281,120 @@ export const useChatStore = defineStore('chat', () => {
         await askMain()
       }
 
+      // 工具调用循环：模型显式选择搜索、读文档、计算、画图、生图、导出
+      const toolRecords = []
+      const chartOptions = []
+      const toolImages = []
+      let pendingExport = null
+      let toolMessages = apiMessages
+      let toolRounds = 0
+      const MAX_TOOL_ROUNDS = 3
+
+      while (toolRounds < MAX_TOOL_ROUNDS) {
+        const calls = extractToolCalls(fullContent)
+        if (!calls.length) break
+        toolRounds += 1
+        const isLastRound = toolRounds >= MAX_TOOL_ROUNDS
+        streamingContent.value = `${fullContent}\n\n> 正在执行工具（${calls.length}）…`
+
+        const results = []
+        for (const call of calls) {
+          if (controller.signal.aborted) break
+          let result
+          try {
+            result = await executeToolCall(call, {
+              settings,
+              signal: controller.signal,
+              documentIds,
+              onStatus: text => {
+                if (text) streamingContent.value = `${fullContent}\n\n> ${text}`
+              },
+            })
+          } catch (err) {
+            result = { ok: false, text: err?.message || String(err), record: `工具执行失败：${err?.message || err}` }
+          }
+          results.push({ call, result })
+          if (result.record) toolRecords.push(result.record)
+          if (result.chartOption) chartOptions.push(result.chartOption)
+          if (Array.isArray(result.images)) toolImages.push(...result.images)
+          if (result.exportFormat) pendingExport = result.exportFormat
+        }
+
+        if (controller.signal.aborted) {
+          throw Object.assign(new Error('Aborted'), { name: 'AbortError' })
+        }
+
+        const resultsText = results
+          .map(({ call, result }) => `工具：${call.tool}\n状态：${result.ok ? '成功' : '失败'}\n${String(result.text || '').slice(0, 8000)}`)
+          .join('\n\n')
+        const previousContent = fullContent
+        const previousThinking = fullThinking
+        toolMessages = [
+          ...toolMessages,
+          { role: 'assistant', content: previousContent },
+          {
+            role: 'user',
+            content: `【工具执行结果】\n${resultsText}\n\n请基于以上真实结果继续回答。不要编造结果，也不要重复调用已经成功的工具。${
+              isLastRound ? '这是最后一轮，请直接给出最终回答，不要再调用工具。' : '如仍需其他工具，可以继续调用。'
+            }`,
+          },
+        ]
+
+        try {
+          await (attemptedSecondary ? askSecondary : askMain)(toolMessages)
+        } catch (err) {
+          fullContent = previousContent
+          fullThinking = previousThinking
+          streamingContent.value = previousContent
+          toolRecords.push(
+            err?.name === 'AbortError'
+              ? '最终回答已中止，以上为工具执行与原始回答'
+              : `最终回答生成失败：${err?.message || err}`
+          )
+          break
+        }
+      }
+
+      // 达到轮次上限后仍有工具调用：移除未执行的代码块，避免把 JSON 展示给用户
+      if (extractToolCalls(fullContent).length) {
+        fullContent = stripToolBlocks(fullContent)
+        if (fullContent) fullContent += '\n\n（已达到工具调用上限，以上为当前结果。）'
+      }
+
       const notices = []
       if (imageNotice) notices.push(imageNotice)
       if (fellBackToSecondary) {
         notices.push(`主模型「${settings.model}」未能处理图片，已自动切换到副模型「${settings.secondaryModel}」。`)
       }
-      const content = notices.length ? `> ${notices.join('\n> ')}\n\n${fullContent}` : fullContent
-      const finalUsage = lastUsage || buildEstimatedUsage(apiMessages, fullContent, attemptedModel)
-      recordUsage(finalUsage)
-      return { content, thinking: fullThinking || undefined, usage: finalUsage }
+      let content = notices.length ? `> ${notices.join('\n> ')}\n\n${fullContent}` : fullContent
+      for (const option of chartOptions.slice(0, 2)) {
+        content += `\n\n\`\`\`echarts\n${JSON.stringify(option)}\n\`\`\``
+      }
+      if (toolRecords.length) {
+        content += `\n\n---\n**工具调用记录**\n\`\`\`\`\n${toolRecords.join('\n\n').slice(0, 6000)}\n\`\`\`\``
+      }
+      const finalUsage = usageList.length
+        ? sumUsage(usageList, attemptedModel)
+        : buildEstimatedUsage(apiMessages, fullContent, attemptedModel)
+      if (usageList.length) usageList.forEach(u => recordUsage(u))
+      else recordUsage(finalUsage)
+      return {
+        content,
+        thinking: fullThinking || undefined,
+        usage: finalUsage,
+        images: toolImages.length ? toolImages.slice(0, 4) : undefined,
+        pendingExport,
+      }
     } catch (err) {
       if (err.name === 'AbortError') {
         if (fullContent || fullThinking) {
-          const finalUsage = lastUsage || buildEstimatedUsage(history, fullContent, attemptedModel)
-          recordUsage(finalUsage)
-          return { content: `${fullContent}\n\n*[已中止]*`, thinking: fullThinking || undefined, usage: finalUsage }
+          const finalUsage = usageList.length
+            ? sumUsage(usageList, attemptedModel)
+            : buildEstimatedUsage(history, fullContent, attemptedModel)
+          if (usageList.length) usageList.forEach(u => recordUsage(u))
+          else recordUsage(finalUsage)
+          const partial = stripToolBlocks(fullContent) || fullContent
+          return { content: `${partial}\n\n*[已中止]*`, thinking: fullThinking || undefined, usage: finalUsage }
         }
         return null
       }
@@ -303,25 +434,6 @@ export const useChatStore = defineStore('chat', () => {
     const settings = useSettingsStore()
     const { topics, topicId, branch } = ensureConversation()
     if (!topicId) return
-
-    const pending = pendingSearch.value
-    let confirmedQuery = ''
-    let confirmedSearch = false
-    let declinedSearch = false
-
-    if (pending) {
-      const sameConversation = pending.topicId === topicId && pending.branchId === branch.id
-      if (settings.searchSkillEnabled && sameConversation) {
-        const kind = detectSearchReply(userContent)
-        if (kind === 'yes') {
-          confirmedQuery = pending.query
-          confirmedSearch = true
-        } else if (kind === 'no') {
-          declinedSearch = true
-        }
-      }
-      pendingSearch.value = null
-    }
 
     branch.messages.push({
       id: newMessageId(),
@@ -392,48 +504,12 @@ export const useChatStore = defineStore('chat', () => {
       return
     }
 
-    if (declinedSearch) {
-      branch.messages.push({
-        id: newMessageId(),
-        role: 'assistant',
-        content: '好的，不联网搜索。你可以继续直接提问。',
-        ts: Date.now(),
-      })
-      saveMessages(topicId)
-      topics.touchTopic(topicId)
-      return
-    }
-
-    let intent = 'none'
-    if (confirmedSearch || settings.forceSearch) intent = 'search'
-    else if (settings.searchSkillEnabled) intent = detectSearchIntent(userContent)
-
     let searchNotice = ''
-
-    // 意图不明确时先问一句，不直接发请求；没配 Key 时问了也搜不了，直接提示
-    if (intent === 'confirm') {
-      if (!String(settings.tavilyApiKey || '').trim()) {
-        const msg = '未配置 Tavily API Key，已跳过联网搜索。请在 设置 → 搜索服务 中填写。'
-        const fallback = buildSearchFallbackText(userContent)
-        searchNotice = fallback ? `${msg}\n${fallback}` : msg
-        window.__ui?.showToast(msg, 'error', 4500)
-      } else {
-        pendingSearch.value = { query: userContent, topicId, branchId: branch.id }
-        branch.messages.push({
-          id: newMessageId(),
-          role: 'assistant',
-          content: '这个问题可能需要联网确认最新信息。要我用 Tavily 搜一下再回答吗？回复「搜」即可；不想搜就回复「不用」。',
-          ts: Date.now(),
-        })
-        saveMessages(topicId)
-        topics.touchTopic(topicId)
-        return
-      }
-    }
-
     let searchBlock = ''
-    if (intent === 'search') {
-      const rawQuery = confirmedSearch ? confirmedQuery : userContent
+
+    // 强制联网搜索开关：保留原有直接搜索路径，不参与工具选择
+    if (settings.forceSearch) {
+      const rawQuery = userContent
       // 去掉口语前缀与时间短语，保留 site: / filetype: 等操作符
       const query = buildSearchQuery(rawQuery) || rawQuery
       const timeRange = detectTimeRange(rawQuery)
@@ -444,17 +520,6 @@ export const useChatStore = defineStore('chat', () => {
         const msg = '未配置 Tavily API Key，已跳过联网搜索。请在 设置 → 搜索服务 中填写。'
         searchNotice = fallbackText ? `${msg}\n${fallbackText}` : msg
         window.__ui?.showToast(msg, 'error', 4500)
-        if (confirmedSearch) {
-          branch.messages.push({
-            id: newMessageId(),
-            role: 'assistant',
-            content: searchNotice,
-            ts: Date.now(),
-          })
-          saveMessages(topicId)
-          topics.touchTopic(topicId)
-          return
-        }
       } else {
         // 搜索期间用 AI 气泡提示，搜索完成后直接进入生成
         searching.value = true
@@ -482,17 +547,6 @@ export const useChatStore = defineStore('chat', () => {
         } else {
           searchNotice = fallbackText ? `${result.message}\n${fallbackText}` : result.message
           window.__ui?.showToast(result.message, 'error', 4500)
-          if (confirmedSearch) {
-            branch.messages.push({
-              id: newMessageId(),
-              role: 'assistant',
-              content: searchNotice,
-              ts: Date.now(),
-            })
-            saveMessages(topicId)
-            topics.touchTopic(topicId)
-            return
-          }
         }
       }
     }
@@ -509,11 +563,14 @@ export const useChatStore = defineStore('chat', () => {
       content: searchNotice
         ? `> ${String(searchNotice).trim().split('\n').join('\n> ')}\n\n${reply.content}`
         : reply.content,
+      images: reply.images,
       usage: reply.usage,
       ts: Date.now(),
     })
     saveMessages(topicId)
     topics.touchTopic(topicId)
+
+    handlePendingExport(reply, branch, topics)
 
     // 首轮对话自动生成标题
     if (branch.messages.filter(m => m.role === 'user').length === 1) {
@@ -527,6 +584,8 @@ export const useChatStore = defineStore('chat', () => {
         .map(m => ({ role: m.role, content: m.content }))
       window.__ui?.showToast('正在提炼记忆…', 'info')
       saveMemoriesFromChat(userContent, transcript, settings)
+    } else {
+      maybeAutoDistill(branch, settings, userContent)
     }
   }
 
@@ -537,7 +596,6 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function clearMessages() {
-    pendingSearch.value = null
     conversation.value = createConversation()
     activeBranchId.value = 'b-main'
     const topics = useTopicsStore()
@@ -610,10 +668,12 @@ export const useChatStore = defineStore('chat', () => {
         role: 'assistant',
         thinking: reply.thinking,
         content: reply.content,
+        images: reply.images,
         ts: Date.now(),
       })
       saveMessages(fork.topicId)
       topics.touchTopic(fork.topicId)
+      handlePendingExport(reply, fork.branch, topics)
     }
     window.__ui?.showToast(`已编辑并生成「${fork.branch.name}」，原对话保留`, 'success')
   }
@@ -633,9 +693,12 @@ export const useChatStore = defineStore('chat', () => {
     msg.activeVersion = versions.length - 1
     msg.content = reply.content
     msg.thinking = reply.thinking
+    if (reply.images?.length) msg.images = reply.images
 
     saveMessages(topicId)
-    useTopicsStore().touchTopic(topicId)
+    const topics = useTopicsStore()
+    topics.touchTopic(topicId)
+    handlePendingExport(reply, branch, topics)
   }
 
   /**
@@ -708,11 +771,13 @@ export const useChatStore = defineStore('chat', () => {
       role: 'assistant',
       thinking: reply.thinking,
       content: reply.content,
+      images: reply.images,
       usage: reply.usage,
       ts: Date.now(),
     })
     saveMessages(topicId)
     topics.touchTopic(topicId)
+    handlePendingExport(reply, branch, topics)
   }
 
   // 删除单条消息（支持消息 id 或下标）
@@ -753,8 +818,32 @@ export const useChatStore = defineStore('chat', () => {
     } catch { /* 静默失败 */ }
   }
 
+  // 自动记忆沉淀：每 N 轮用户消息触发一次，后台执行
+  function maybeAutoDistill(branch, settings, userContent) {
+    const memory = useMemoryStore()
+    if (!memory.autoEnabled || autoDistillRunning || !settings.settingsReady) return
+    if (detectMemoryCommand(userContent)) return
+
+    const turns = branch.messages.filter(m => m.role === 'user').length
+    const every = Math.max(2, Math.min(50, Number(memory.autoTurns) || 10))
+    if (!turns || turns % every !== 0) return
+
+    const transcript = branch.messages
+      .filter(m => m.content)
+      .slice(-16)
+      .map(m => ({ role: m.role, content: m.content }))
+    autoDistillRunning = true
+    window.__ui?.showToast(`正在进行第 ${turns} 轮记忆沉淀…`, 'info', 2200)
+    saveMemoriesFromChat(
+      '请从最近对话中自动提炼值得长期保留的用户偏好、事实、目标与约定。',
+      transcript,
+      settings,
+      { auto: true }
+    ).finally(() => { autoDistillRunning = false })
+  }
+
   // 提炼并保存记忆（后台执行，不阻塞对话）
-  async function saveMemoriesFromChat(userText, transcript, settings) {
+  async function saveMemoriesFromChat(userText, transcript, settings, { auto = false } = {}) {
     const memory = useMemoryStore()
     try {
       const entries = await extractMemoryEntries({
@@ -773,10 +862,19 @@ export const useChatStore = defineStore('chat', () => {
         memory.create(entry.title, entry.content, 'chat')
         added++
       }
-      if (added) window.__ui?.showToast(`已存入记忆：${added} 条`, 'success')
-      else window.__ui?.showToast('这些内容已在记忆中', 'info')
+      if (added) {
+        window.__ui?.showToast(
+          auto ? `已自动沉淀 ${added} 条记忆` : `已存入记忆：${added} 条`,
+          'success'
+        )
+      } else if (!auto) {
+        window.__ui?.showToast('这些内容已在记忆中', 'info')
+      }
     } catch {
-      window.__ui?.showToast('记忆保存失败，请检查模型配置', 'error')
+      window.__ui?.showToast(
+        auto ? '自动记忆沉淀失败，请检查模型配置' : '记忆保存失败，请检查模型配置',
+        'error'
+      )
     }
   }
 
@@ -811,6 +909,9 @@ export const useChatStore = defineStore('chat', () => {
     if (settings.replyRulesEnabled && replyRules) {
       parts.push(`\n\n【回复规则】\n${replyRules}`)
     }
+
+    const toolPrompt = buildToolPrompt(settings)
+    if (toolPrompt) parts.push(toolPrompt)
 
     // 长期记忆：主记忆未禁用时生效，读取有上限
     const memory = useMemoryStore()

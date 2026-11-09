@@ -10,6 +10,12 @@
       </button>
     </div>
 
+    <div class="contacts-search">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input v-model="query" type="text" placeholder="搜索好友、群聊或聊天记录" />
+      <button v-if="query" class="search-clear" title="清空" @click="query = ''">×</button>
+    </div>
+
     <button
       v-if="showCircleEntry"
       class="circle-entry"
@@ -24,45 +30,94 @@
     </button>
 
     <div v-if="hasAny" class="contacts-list">
+      <template v-if="messageResults.length">
+        <div class="section-label">聊天记录</div>
+        <button
+          v-for="result in messageResults"
+          :key="result.messageId"
+          class="message-result"
+          @click="$emit('select', result.type, result.chatId)"
+        >
+          <div class="message-result-head">
+            <span>{{ result.chatName }}</span>
+            <span>{{ fmtListTime(result.ts) }}</span>
+          </div>
+          <div class="message-result-text">
+            <b>{{ result.senderName }}</b>：{{ result.content }}
+          </div>
+        </button>
+      </template>
+
       <template v-if="sortedGroups.length">
         <div class="section-label">群聊</div>
-        <button
+        <div
           v-for="g in sortedGroups"
           :key="g.id"
           class="contact-item"
+          role="button"
+          tabindex="0"
           :class="{ active: activeType === 'group' && activeId === g.id }"
           @click="$emit('select', 'group', g.id)"
+          @keydown.enter="$emit('select', 'group', g.id)"
         >
           <StarryAvatar group :name="g.name" :size="44" />
           <div class="contact-info">
             <div class="contact-line">
               <span class="contact-name">{{ g.name }}</span>
               <span class="contact-time">{{ fmtListTime(g.lastTs) }}</span>
+              <span v-if="g.unread" class="unread-badge">{{ g.unread > 99 ? '99+' : g.unread }}</span>
             </div>
             <div class="contact-preview">{{ g.lastMessage || `${g.members.length + 1} 人` }}</div>
           </div>
-        </button>
+          <button
+            class="pin-btn"
+            :class="{ active: g.pinned }"
+            :title="g.pinned ? '取消置顶' : '置顶'"
+            @click.stop="$emit('toggle-pin', 'group', g.id)"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 17v5"/><path d="M9 10.8V4h6v6.8l3 3.2H6l3-3.2z"/></svg>
+          </button>
+        </div>
       </template>
 
       <template v-if="sortedFriends.length">
         <div class="section-label">好友</div>
-        <button
+        <div
           v-for="f in sortedFriends"
           :key="f.id"
           class="contact-item"
+          role="button"
+          tabindex="0"
           :class="{ active: activeType === 'friend' && activeId === f.id }"
           @click="$emit('select', 'friend', f.id)"
+          @keydown.enter="$emit('select', 'friend', f.id)"
         >
           <StarryAvatar :name="f.name" :src="f.avatar" :size="44" />
           <div class="contact-info">
             <div class="contact-line">
               <span class="contact-name">{{ f.name }}</span>
               <span class="contact-time">{{ fmtListTime(f.lastTs) }}</span>
+              <span v-if="f.unread" class="unread-badge">{{ f.unread > 99 ? '99+' : f.unread }}</span>
             </div>
             <div class="contact-preview">{{ f.lastMessage || '开始聊天吧' }}</div>
           </div>
-        </button>
+          <button
+            class="pin-btn"
+            :class="{ active: f.pinned }"
+            :title="f.pinned ? '取消置顶' : '置顶'"
+            @click.stop="$emit('toggle-pin', 'friend', f.id)"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 17v5"/><path d="M9 10.8V4h6v6.8l3 3.2H6l3-3.2z"/></svg>
+          </button>
+        </div>
       </template>
+
+      <div
+        v-if="query && !sortedGroups.length && !sortedFriends.length && !messageResults.length"
+        class="search-empty"
+      >
+        未找到相关好友、群聊或聊天记录
+      </div>
     </div>
 
     <div v-else class="contacts-empty">
@@ -77,8 +132,9 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import StarryAvatar from './StarryAvatar.vue'
+import { useStarryStore } from '../../stores/starry'
 
 const props = defineProps({
   friends: { type: Array, default: () => [] },
@@ -89,17 +145,37 @@ const props = defineProps({
   circleActive: { type: Boolean, default: false },
 })
 
-defineEmits(['select', 'add', 'open-circle'])
+defineEmits(['select', 'add', 'open-circle', 'toggle-pin'])
+
+const store = useStarryStore()
+const query = ref('')
 
 const hasAny = computed(() => props.friends.length > 0 || props.groups.length > 0)
 const totalCount = computed(() => props.friends.length + props.groups.length)
 
-const sortedGroups = computed(() =>
-  [...props.groups].sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0))
-)
-const sortedFriends = computed(() =>
-  [...props.friends].sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0))
-)
+function matches(item) {
+  const needle = query.value.trim().toLowerCase()
+  if (!needle) return true
+  return String(item.name || '').toLowerCase().includes(needle) ||
+    String(item.lastMessage || '').toLowerCase().includes(needle)
+}
+
+function sortChats(list) {
+  return [...list].sort((a, b) => {
+    const pinDiff = (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0)
+    if (pinDiff) return pinDiff
+    const unreadDiff = (b.unread ? 1 : 0) - (a.unread ? 1 : 0)
+    if (unreadDiff) return unreadDiff
+    return (b.lastTs || 0) - (a.lastTs || 0)
+  })
+}
+
+const sortedGroups = computed(() => sortChats(props.groups.filter(matches)))
+const sortedFriends = computed(() => sortChats(props.friends.filter(matches)))
+const messageResults = computed(() => {
+  const needle = query.value.trim()
+  return needle.length >= 2 ? store.searchMessages(needle, 12) : []
+})
 
 function pad(n) {
   return String(n).padStart(2, '0')
@@ -154,6 +230,105 @@ function fmtListTime(ts) {
 .contacts-count {
   font-size: 11px;
   color: var(--text-muted);
+}
+.contacts-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 12px 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 9px;
+  background: var(--bg-input);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.contacts-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+}
+.search-clear {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 2px;
+}
+.message-result {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  border: none;
+  border-top: 1px solid var(--border-color);
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+}
+.message-result:hover { background: var(--bg-hover); }
+.message-result-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 3px;
+}
+.message-result-text {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.message-result-text b { color: var(--text-primary); font-weight: 600; }
+.unread-badge {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+.pin-btn {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+.contact-item:hover .pin-btn { opacity: 1; }
+.pin-btn.active { opacity: 1; color: var(--accent); }
+.pin-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.search-empty {
+  padding: 16px 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+@media (max-width: 768px) {
+  .pin-btn { opacity: 0.6; }
 }
 .add-btn {
   width: 30px;

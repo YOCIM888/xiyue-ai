@@ -1,10 +1,11 @@
 import { sendChatRequest } from './api'
 import { isDuplicatePost, summarizePost } from '../utils/circleSeeds'
 
-const CATEGORIES = [
+export const CIRCLE_CATEGORIES = [
   '日常', '生活', '艺术', '哲学', '科技', '生物学', '电子',
   '旅行', '音乐', '电影', '读书', '美食', '运动', '摄影', '天文', '心理学',
 ]
+const CATEGORIES = CIRCLE_CATEGORIES
 
 const FALLBACK_COMMENTS = [
   '好喜欢这条动态。',
@@ -224,10 +225,11 @@ export async function generateCirclePosts({
   seeds = [],
   existingPosts = [],
   memoryContext = '',
+  category = '',
 }) {
   if (!friends.length) throw new Error('还没有好友，无法生成动态')
 
-  const categoryHint = pick(CATEGORIES, 6).join('、')
+  const categoryHint = category ? String(category) : pick(CATEGORIES, 6).join('、')
   const accepted = []
   const rejected = []
   let sawCandidate = false

@@ -5,6 +5,16 @@ import { getItem, setItem } from '../utils/kv'
 const KEY = 'xiyue_memories'
 const ENABLED_KEY = 'xiyue_memory_enabled'
 const ACCESS_KEY = 'xiyue_memory_access'
+const AUTO_KEY = 'xiyue_memory_auto'
+
+const AUTO_TURNS_MIN = 2
+const AUTO_TURNS_MAX = 50
+const AUTO_TURNS_DEFAULT = 10
+
+export const DEFAULT_MEMORY_AUTO = {
+  enabled: true,
+  turns: AUTO_TURNS_DEFAULT,
+}
 
 // 跨模块读取权限。默认全部关闭：老用户升级后保持原有的模块隔离行为。
 export const DEFAULT_MEMORY_ACCESS = {
@@ -45,10 +55,34 @@ function loadAccess() {
   return merged
 }
 
+function clampAutoTurns(value) {
+  const num = Math.round(Number(value))
+  if (!Number.isFinite(num)) return AUTO_TURNS_DEFAULT
+  return Math.min(AUTO_TURNS_MAX, Math.max(AUTO_TURNS_MIN, num))
+}
+
+function loadAuto() {
+  const merged = { ...DEFAULT_MEMORY_AUTO }
+  try {
+    const raw = getItem(AUTO_KEY)
+    if (!raw) return merged
+    const data = JSON.parse(raw)
+    if (!data || typeof data !== 'object') return merged
+    if (typeof data.enabled === 'boolean') merged.enabled = data.enabled
+    if (data.turns !== undefined) merged.turns = clampAutoTurns(data.turns)
+  } catch {
+    // 设置损坏时使用默认值
+  }
+  return merged
+}
+
 export const useMemoryStore = defineStore('memory', () => {
   const memories = ref(loadMemories())
   const enabled = ref(loadEnabled())
   const access = ref(loadAccess())
+  const auto = loadAuto()
+  const autoEnabled = ref(auto.enabled)
+  const autoTurns = ref(auto.turns)
 
   const sorted = computed(() => [...memories.value].sort((a, b) => b.updatedAt - a.updatedAt))
 
@@ -65,6 +99,15 @@ export const useMemoryStore = defineStore('memory', () => {
   function persistAccess() {
     try {
       setItem(ACCESS_KEY, JSON.stringify(access.value))
+    } catch { /* 存储超限时静默失败 */ }
+  }
+
+  function persistAuto() {
+    try {
+      setItem(AUTO_KEY, JSON.stringify({
+        enabled: autoEnabled.value,
+        turns: clampAutoTurns(autoTurns.value),
+      }))
     } catch { /* 存储超限时静默失败 */ }
   }
 
@@ -101,6 +144,11 @@ export const useMemoryStore = defineStore('memory', () => {
   watch(memories, persist, { deep: true })
   watch(enabled, persistEnabled)
   watch(access, persistAccess, { deep: true })
+  watch([autoEnabled, autoTurns], persistAuto)
 
-  return { memories, sorted, enabled, access, create, update, remove, removeMany }
+  return {
+    memories, sorted, enabled, access,
+    autoEnabled, autoTurns,
+    create, update, remove, removeMany,
+  }
 })

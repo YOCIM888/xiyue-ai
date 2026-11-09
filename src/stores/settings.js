@@ -40,6 +40,9 @@ export const useSettingsStore = defineStore('settings', () => {
     searchMaxChars: 10000,
     searchItemMaxChars: 1200,
     imageGenSkillEnabled: false,
+    calcSandboxEnabled: true,
+    starryReplyLength: 'normal',
+    starryActivity: 'normal',
     // 副模型 API：负责多模态扩展（图片理解、生图）
     secondaryApiBase: 'https://open.bigmodel.cn/api/paas/v4',
     secondaryApiKey: '',
@@ -90,6 +93,9 @@ export const useSettingsStore = defineStore('settings', () => {
   const searchMaxChars = ref(saved.searchMaxChars ?? defaults.searchMaxChars)
   const searchItemMaxChars = ref(saved.searchItemMaxChars ?? defaults.searchItemMaxChars)
   const imageGenSkillEnabled = ref(saved.imageGenSkillEnabled ?? defaults.imageGenSkillEnabled)
+  const calcSandboxEnabled = ref(saved.calcSandboxEnabled ?? defaults.calcSandboxEnabled)
+  const starryReplyLength = ref(saved.starryReplyLength ?? defaults.starryReplyLength)
+  const starryActivity = ref(saved.starryActivity ?? defaults.starryActivity)
   const secondaryApiBase = ref(saved.secondaryApiBase ?? defaults.secondaryApiBase)
   const secondaryApiKey = ref(saved.secondaryApiKey ?? defaults.secondaryApiKey)
   const secondaryModel = ref(saved.secondaryModel ?? defaults.secondaryModel)
@@ -183,6 +189,9 @@ export const useSettingsStore = defineStore('settings', () => {
       searchMaxChars: searchMaxChars.value,
       searchItemMaxChars: searchItemMaxChars.value,
       imageGenSkillEnabled: imageGenSkillEnabled.value,
+      calcSandboxEnabled: calcSandboxEnabled.value,
+      starryReplyLength: starryReplyLength.value,
+      starryActivity: starryActivity.value,
       secondaryApiBase: secondaryApiBase.value,
       secondaryApiKey: secondaryApiKey.value,
       secondaryModel: secondaryModel.value,
@@ -200,7 +209,7 @@ export const useSettingsStore = defineStore('settings', () => {
 
   // 自动持久化：任何设置变更立刻保存
   watch(
-    [apiKey, apiBase, model, temperature, maxTokens, contextLength, topP, personaPrompt, userName, userPersona, replyRules, replyRulesEnabled, thinkingEnabled, userAvatar, personaEnabled, darkMode, linkSkillEnabled, documentSkillEnabled, ocrSkillEnabled, modelVisionMode, searchSkillEnabled, forceSearch, tavilyApiKey, searchDepth, searchMaxResults, searchMaxChars, searchItemMaxChars, imageGenSkillEnabled, secondaryApiBase, secondaryApiKey, secondaryModel, secondaryImageModel, usageInputPrice, usageOutputPrice, backgroundImage, hideUserAvatar, hideAiAvatar],
+    [apiKey, apiBase, model, temperature, maxTokens, contextLength, topP, personaPrompt, userName, userPersona, replyRules, replyRulesEnabled, thinkingEnabled, userAvatar, personaEnabled, darkMode, linkSkillEnabled, documentSkillEnabled, ocrSkillEnabled, modelVisionMode, searchSkillEnabled, forceSearch, tavilyApiKey, searchDepth, searchMaxResults, searchMaxChars, searchItemMaxChars, imageGenSkillEnabled, calcSandboxEnabled, starryReplyLength, starryActivity, secondaryApiBase, secondaryApiKey, secondaryModel, secondaryImageModel, usageInputPrice, usageOutputPrice, backgroundImage, hideUserAvatar, hideAiAvatar],
     () => persist(),
     { deep: false }
   )
@@ -215,7 +224,7 @@ export const useSettingsStore = defineStore('settings', () => {
     apiKey, apiBase, model, temperature, maxTokens, contextLength, topP, personaPrompt, userName, userPersona, replyRules, replyRulesEnabled, thinkingEnabled, userAvatar, personaEnabled, darkMode, linkSkillEnabled,
     backgroundImage, symbolRules, hideUserAvatar, hideAiAvatar, documentSkillEnabled,
     ocrSkillEnabled, modelVisionMode,
-    searchSkillEnabled, forceSearch, tavilyApiKey, searchDepth, searchMaxResults, searchMaxChars, searchItemMaxChars, imageGenSkillEnabled,
+    searchSkillEnabled, forceSearch, tavilyApiKey, searchDepth, searchMaxResults, searchMaxChars, searchItemMaxChars, imageGenSkillEnabled, calcSandboxEnabled, starryReplyLength, starryActivity,
     secondaryApiBase, secondaryApiKey, secondaryModel, secondaryImageModel, secondaryReady, secondaryPresets, applySecondaryPreset,
     usageInputPrice, usageOutputPrice,
     modelPresets, applyPreset, persist, settingsReady, defaults,

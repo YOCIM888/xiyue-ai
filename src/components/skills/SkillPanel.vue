@@ -35,7 +35,7 @@
             <div class="skill-info">
               <div class="skill-name">
                 文档解析
-                <span class="skill-tag muted">默认</span>
+                <span class="skill-tag">默认</span>
               </div>
               <div class="skill-desc">从「我的文档」选择文件，读取正文后作为上下文提供给 AI</div>
             </div>
@@ -51,8 +51,8 @@
             </div>
             <div class="skill-info">
               <div class="skill-name">
-                图片理解 / OCR
-                <span class="skill-tag muted">默认</span>
+                图片理解
+                <span class="skill-tag">默认</span>
               </div>
               <div class="skill-desc">把图片交给视觉模型读字并概括关键内容，不是本地 OCR</div>
             </div>
@@ -69,7 +69,7 @@
             <div class="skill-info">
               <div class="skill-name">
                 AI 生图
-                <span class="skill-tag muted">默认</span>
+                <span class="skill-tag">默认</span>
               </div>
               <div class="skill-desc">根据你的描述调用副模型生成图片</div>
             </div>
@@ -86,15 +86,36 @@
             <div class="skill-info">
               <div class="skill-name">
                 联网搜索
-                <span class="skill-tag muted">默认</span>
+                <span class="skill-tag">默认</span>
               </div>
-              <div class="skill-desc">识别明确搜索意图，用 Tavily 检索最新信息并附来源</div>
+              <div class="skill-desc">由模型按需显式调用 Tavily，检索最新信息并附来源</div>
             </div>
             <label class="switch" :title="settings.searchSkillEnabled ? '点击关闭' : '点击开启'">
               <input v-model="settings.searchSkillEnabled" type="checkbox" />
               <span class="switch-track"><span class="switch-thumb"></span></span>
             </label>
           </div>
+
+          <div class="skill-card">
+            <div class="skill-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="10" x2="8" y2="10"/><line x1="12" y1="10" x2="12" y2="10"/><line x1="16" y1="10" x2="16" y2="10"/><line x1="8" y1="14" x2="8" y2="14"/><line x1="12" y1="14" x2="12" y2="14"/><line x1="16" y1="14" x2="16" y2="14"/><line x1="8" y1="18" x2="16" y2="18"/></svg>
+            </div>
+            <div class="skill-info">
+              <div class="skill-name">
+                计算沙箱
+                <span class="skill-tag">默认</span>
+              </div>
+              <div class="skill-desc">表格用 JS Worker 统计校验，复杂计算按需执行 JS / Python</div>
+            </div>
+            <label class="switch" :title="settings.calcSandboxEnabled ? '点击关闭' : '点击开启'">
+              <input v-model="settings.calcSandboxEnabled" type="checkbox" />
+              <span class="switch-track"><span class="switch-thumb"></span></span>
+            </label>
+          </div>
+
+          <p v-if="settings.calcSandboxEnabled" class="skill-hint">
+            表格附件与 /表格 会先本地统计；需要精确计算时模型会生成沙箱代码并执行。Python 首次运行需从 CDN 下载约 10MB 运行时。
+          </p>
 
           <p v-if="settings.ocrSkillEnabled" class="skill-hint" :class="{ warn: !settings.secondaryReady && visionStatus === 'text' }">
             <template v-if="visionStatus === 'vision'">

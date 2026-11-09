@@ -8,10 +8,39 @@
         <h1>探索星空</h1>
         <p>与星空中的TA们聊聊</p>
       </div>
-      <button class="exit-btn" title="退出探索星空" @click="exitStarry">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>
-      </button>
+      <div class="header-actions">
+        <button class="exit-btn" title="星空设置" @click.stop="settingsOpen = !settingsOpen">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="9" cy="7" r="2" fill="var(--bg-primary)"/><circle cx="15" cy="12" r="2" fill="var(--bg-primary)"/><circle cx="8" cy="17" r="2" fill="var(--bg-primary)"/></svg>
+        </button>
+        <button class="exit-btn" title="退出探索星空" @click="exitStarry">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>
+        </button>
+      </div>
     </header>
+
+    <div v-if="settingsOpen" class="starry-settings" @click.stop>
+      <div class="ss-head">
+        <span>星空设置</span>
+        <button @click="settingsOpen = false">×</button>
+      </div>
+      <div class="ss-row">
+        <span>回复长度</span>
+        <div class="ss-options">
+          <button :class="{ active: settings.starryReplyLength === 'short' }" @click="settings.starryReplyLength = 'short'">短</button>
+          <button :class="{ active: settings.starryReplyLength === 'normal' }" @click="settings.starryReplyLength = 'normal'">标准</button>
+          <button :class="{ active: settings.starryReplyLength === 'long' }" @click="settings.starryReplyLength = 'long'">长</button>
+        </div>
+      </div>
+      <div class="ss-row">
+        <span>群聊活跃度</span>
+        <div class="ss-options">
+          <button :class="{ active: settings.starryActivity === 'low' }" @click="settings.starryActivity = 'low'">低</button>
+          <button :class="{ active: settings.starryActivity === 'normal' }" @click="settings.starryActivity = 'normal'">中</button>
+          <button :class="{ active: settings.starryActivity === 'high' }" @click="settings.starryActivity = 'high'">高</button>
+        </div>
+      </div>
+      <p class="ss-hint">活跃度决定群聊每轮最多有几位好友回复。</p>
+    </div>
 
     <div class="starry-body">
       <!-- 桌面端：左侧会话栏 + 右侧聊天/圈子 -->
@@ -26,6 +55,7 @@
           @select="selectChat"
           @add="openAddMenu"
           @open-circle="openCircle"
+          @toggle-pin="store.togglePin"
         />
 
         <StarryCircle v-if="desktopMode === 'circle'" />
@@ -59,6 +89,7 @@
           :active-id="store.activeId"
           @select="selectChat"
           @add="openAddMenu"
+          @toggle-pin="store.togglePin"
         />
 
         <StarryDirectory
@@ -121,6 +152,7 @@ const isMobile = ref(window.innerWidth <= 768)
 const mobileView = ref('list')
 const mobileTab = ref('chat')
 const desktopMode = ref('chat')
+const settingsOpen = ref(false)
 
 function checkMobile() {
   isMobile.value = window.innerWidth <= 768
@@ -200,6 +232,7 @@ function exitStarry() {
 
 onMounted(() => {
   store.init()
+  store.setViewActive(true)
   window.addEventListener('resize', checkMobile)
   if (!isApiConfigured(settings)) {
     window.__ui?.showToast('请先在设置中配置模型 API', 'info', 3500)
@@ -207,6 +240,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  store.setViewActive(false)
   window.removeEventListener('resize', checkMobile)
 })
 </script>
@@ -218,6 +252,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   height: 100%;
+  position: relative;
 }
 
 .starry-header {
@@ -273,6 +308,80 @@ onUnmounted(() => {
 .exit-btn:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
+}
+
+.header-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.header-actions .exit-btn { margin-left: 0; }
+
+.starry-settings {
+  position: absolute;
+  top: 58px;
+  right: 18px;
+  z-index: 80;
+  width: 260px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-card);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.18);
+}
+.ss-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 10px;
+}
+.ss-head button {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 15px;
+  cursor: pointer;
+}
+.ss-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.ss-options {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--bg-hover);
+}
+.ss-options button {
+  padding: 4px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.ss-options button.active {
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+.ss-hint {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
 }
 
 .starry-body {

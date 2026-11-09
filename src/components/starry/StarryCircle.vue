@@ -17,6 +17,36 @@
       </div>
     </header>
 
+    <div class="circle-tools">
+      <div class="circle-tools-left">
+        <select v-model="refreshCategory" class="circle-select">
+          <option value="">全部分类</option>
+          <option v-for="category in CIRCLE_CATEGORIES" :key="category" :value="category">{{ category }}</option>
+        </select>
+        <select v-model.number="refreshCount" class="circle-select">
+          <option :value="2">2 条</option>
+          <option :value="4">4 条</option>
+          <option :value="6">6 条</option>
+        </select>
+      </div>
+      <span class="circle-tools-hint">生成失败会自动重试一次</span>
+    </div>
+
+    <div class="post-composer">
+      <textarea v-model="postDraft" rows="2" maxlength="500" placeholder="分享一条动态，好友们会来评论…"></textarea>
+      <div class="post-composer-actions">
+        <select v-model="postCategory" class="circle-select">
+          <option v-for="category in CIRCLE_CATEGORIES" :key="category" :value="category">{{ category }}</option>
+        </select>
+        <button class="publish-btn" :disabled="!postDraft.trim()" @click="publishPost">发布动态</button>
+      </div>
+    </div>
+
+    <div v-if="refreshError && !store.refreshing" class="refresh-error-card">
+      <p>{{ refreshError }}</p>
+      <button @click="refresh">重试</button>
+    </div>
+
     <div ref="feedEl" class="circle-feed">
       <div v-if="store.refreshing" class="refreshing-card">
         <span class="dot"></span>
@@ -34,7 +64,7 @@
         <button class="empty-btn" @click="refresh">刷新动态</button>
       </div>
 
-      <article v-for="post in store.posts" :key="post.id" class="post-card">
+      <article v-for="post in visiblePosts" :key="post.id" class="post-card">
         <div class="post-head">
           <StarryAvatar :name="post.authorName" :src="avatarOf(post.authorId)" :size="38" />
           <div class="post-meta">
@@ -99,6 +129,14 @@
           </div>
         </div>
       </article>
+
+      <button
+        v-if="visiblePosts.length < store.posts.length"
+        class="load-more-posts"
+        @click="visibleLimit += 10"
+      >
+        加载更多动态（{{ store.posts.length - visiblePosts.length }}）
+      </button>
     </div>
 
     <ContextRing class="circle-ctx" :used="contextUsed" :limit="contextLimit" align="right" pop-direction="up" :size="22" />
@@ -114,7 +152,7 @@ import { useSettingsStore } from '../../stores/settings'
 import { useMemoryStore } from '../../stores/memory'
 import { buildCircleMemoryContext } from '../../utils/memoryContext'
 import { isApiConfigured } from '../../services/starry'
-import { generateCirclePosts, generateAuthorReply } from '../../services/starryCircle'
+import { generateCirclePosts, generateAuthorReply, CIRCLE_CATEGORIES } from '../../services/starryCircle'
 import ContextRing from '../common/ContextRing.vue'
 import { estimateTokens } from '../../utils/contextUsage'
 import { collectRecentChatSeeds } from '../../utils/circleSeeds'
@@ -126,6 +164,14 @@ const memory = useMemoryStore()
 
 const feedEl = ref(null)
 const commentDraft = ref({})
+const refreshCategory = ref('')
+const refreshCount = ref(4)
+const refreshError = ref('')
+const postDraft = ref('')
+const postCategory = ref('日常')
+const visibleLimit = ref(20)
+
+const visiblePosts = computed(() => store.posts.slice(0, visibleLimit.value))
 
 const userName = computed(() => settings.userName || '我')
 
@@ -177,24 +223,71 @@ async function refresh() {
   }
 
   store.setRefreshing(true)
+  refreshError.value = ''
   try {
-    const count = 2 + Math.floor(Math.random() * 2)
     const seeds = collectRecentChatSeeds()
     const posts = await generateCirclePosts({
       friends: starry.friends,
       settings,
-      count,
+      count: refreshCount.value,
       seeds,
       existingPosts: store.posts,
       memoryContext: buildCircleMemoryContext(memory),
+      category: refreshCategory.value,
     })
     store.addPosts(posts)
+    visibleLimit.value = Math.max(20, visibleLimit.value)
     if (feedEl.value) feedEl.value.scrollTop = 0
     window.__ui?.showToast(`刷新了 ${posts.length} 条好友动态`, 'success', 2200)
   } catch (err) {
-    window.__ui?.showToast(`刷新失败：${err.message || '请稍后重试'}`, 'error', 3500)
+    refreshError.value = `刷新失败：${err.message || '请稍后重试'}`
+    window.__ui?.showToast(refreshError.value, 'error', 3500)
   } finally {
     store.setRefreshing(false)
+  }
+}
+
+const POST_COMMENTS = [
+  '这个分享很有感觉。',
+  '被你说得也想试试了。',
+  '原来你也在关注这个。',
+  '看到这条心情变好了。',
+  '下次可以多讲讲。',
+]
+
+function publishPost() {
+  const content = postDraft.value.trim()
+  if (!content) return
+  const post = store.addUserPost({
+    authorName: userName.value,
+    category: postCategory.value,
+    content,
+    tags: [postCategory.value],
+    likes: 1 + Math.floor(Math.random() * 6),
+  })
+  if (!post) return
+  postDraft.value = ''
+  visibleLimit.value = Math.max(20, visibleLimit.value)
+
+  const friends = [...starry.friends]
+    .sort(() => Math.random() - 0.5)
+    .slice(0, 2)
+  if (friends.length) {
+    window.__ui?.showToast('动态已发布，好友们正在赶来…', 'success', 2200)
+    setTimeout(() => {
+      friends.forEach((friend, index) => {
+        store.addComment(post.id, {
+          id: `comment-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 6)}`,
+          authorId: friend.id,
+          authorName: friend.name,
+          content: POST_COMMENTS[Math.floor(Math.random() * POST_COMMENTS.length)],
+          isUser: false,
+          ts: Date.now(),
+        })
+      })
+    }, 600)
+  } else {
+    window.__ui?.showToast('动态已发布，添加好友后会有评论', 'info', 2200)
   }
 }
 
@@ -341,6 +434,101 @@ async function submitComment(post) {
 }
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+.circle-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  flex-shrink: 0;
+}
+.circle-tools-left { display: flex; align-items: center; gap: 6px; }
+.circle-tools-hint { font-size: 11px; color: var(--text-muted); }
+.circle-select {
+  padding: 5px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-family: inherit;
+  outline: none;
+}
+.post-composer {
+  margin: 12px 16px 0;
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-card);
+  flex-shrink: 0;
+}
+.post-composer textarea {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  resize: none;
+  outline: none;
+}
+.post-composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+.publish-btn {
+  padding: 6px 14px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.publish-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.refresh-error-card {
+  margin: 12px 16px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--danger);
+  border-radius: 10px;
+  background: var(--danger-bg);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--danger);
+}
+.refresh-error-card p { margin: 0; line-height: 1.5; }
+.refresh-error-card button {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--danger);
+  font-size: 11px;
+  cursor: pointer;
+}
+.load-more-posts {
+  display: block;
+  margin: 12px auto 20px;
+  padding: 7px 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
 }
 .circle-feed {
   flex: 1;

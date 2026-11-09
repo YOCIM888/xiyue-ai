@@ -27,6 +27,22 @@ export const SLASH_COMMANDS = [
     example: '（留空总结整段对话，或粘贴要总结的内容）',
   },
   {
+    id: 'table',
+    command: '/表格',
+    label: '表格',
+    aliases: ['csv', 'excel', '表格分析'],
+    desc: '分析 CSV / Excel 数据，输出统计、异常、图表与结论',
+    example: '（粘贴数据或上传 .csv/.xlsx 文件，可补充分析目标）',
+  },
+  {
+    id: 'calc',
+    command: '/计算',
+    label: '计算',
+    aliases: ['calc', '算一下'],
+    desc: '让模型写 JS / Python 在本地执行，避免心算',
+    example: '123456789 × 987654321 的精确结果',
+  },
+  {
     id: 'translate',
     command: '/翻译',
     label: '翻译',
@@ -54,6 +70,14 @@ export const SLASH_COMMANDS = [
     desc: '解释代码或概念，说明关键点',
     example: '这段代码为什么会出现 Event loop is closed',
   },
+  {
+    id: 'export',
+    command: '/导出',
+    label: '导出',
+    aliases: ['export', '导出对话'],
+    desc: '导出当前对话为 Markdown、HTML、PDF 或 Word',
+    example: '（直接选择格式，或输入 /导出 md）',
+  },
 ]
 
 const TARGET_LANG_RE = /^(中文|英文|日语|韩语|法语|德语|西班牙语|俄语|english|chinese|japanese|korean)\s+([\s\S]+)$/i
@@ -64,7 +88,7 @@ export function matchSlashCommands(input) {
   if (!text.startsWith('/') || /\s/.test(text)) return []
   const q = text.slice(1).toLowerCase()
   return SLASH_COMMANDS.filter(c => {
-    const keys = [c.label, c.command.slice(1), c.id]
+    const keys = [c.label, c.command.slice(1), c.id, ...(c.aliases || [])]
     return keys.some(k => k.toLowerCase().includes(q))
   })
 }
@@ -76,7 +100,9 @@ export function parseSlashInput(input) {
   const spaceIdx = text.search(/\s/)
   const cmdText = spaceIdx === -1 ? text : text.slice(0, spaceIdx)
   const arg = spaceIdx === -1 ? '' : text.slice(spaceIdx + 1).trim()
-  const command = SLASH_COMMANDS.find(c => c.command === cmdText)
+  const command = SLASH_COMMANDS.find(c =>
+    c.command === cmdText || (c.aliases || []).some(a => `/${a}` === cmdText)
+  )
   if (!command) return null
 
   const display = text
@@ -92,6 +118,14 @@ function buildPrompt(id, arg) {
       return arg
         ? `请总结以下内容，提炼关键要点、结论和待办：\n\n${arg}`
         : '请总结我们上面的对话，提炼关键结论、已确认的信息、待办事项和尚未解决的问题。'
+    case 'table':
+      return arg
+        ? `请分析以下 CSV / Excel 表格数据，按顺序输出：\n1. 数据结构：行列数、字段名与含义；\n2. 数据质量：缺失值、重复行、明显异常值；\n3. 关键统计：数值列的总计、均值、最小、最大，分类列的数量分布 Top N；\n4. 趋势与洞察：存在时间列时说明变化趋势，并指出值得注意的规律或异常；\n5. 结论与建议：给出可执行的下一步；\n6. 可视化：若数据适合，追加一个最合适的图表，代码块语言必须写成 \`\`\`echarts，内容为合法 JSON（不要注释、不要函数、不要多余文字），图表类型只用 bar、line、pie、scatter。\n结果用 Markdown 表格呈现；数据不足以判断时直接说明，不要编造。\n\n${arg}`
+        : '请分析我上传或粘贴的 CSV / Excel 表格数据：先识别行列数与字段含义，再检查缺失值、重复和异常，给出数值列的关键统计与分类列分布，最后总结趋势、结论与建议，用 Markdown 表格呈现。若数据适合，再追加一个最合适的图表，代码块语言必须写成 echarts，内容为合法 JSON（不要注释、不要函数），图表类型只用 bar、line、pie、scatter。数据不足时直接说明，不要编造。'
+    case 'calc':
+      return arg
+        ? `请使用计算沙箱完成以下任务，不要心算：\n\n${arg}\n\n如果需要计算，请输出一个 \`\`\`sandbox-js 或 \`\`\`sandbox-python 代码块；JavaScript 用 return 返回结果，Python 用 print 或最后一行表达式输出。`
+        : '请使用计算沙箱计算我上一条消息中的问题。需要计算时输出一个 ```sandbox-js 或 ```sandbox-python 代码块，不要直接给出心算结果。'
     case 'translate': {
       const match = arg.match(TARGET_LANG_RE)
       const target = match ? match[1] : ''

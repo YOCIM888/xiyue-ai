@@ -17,13 +17,34 @@
         <div class="head-sub" :class="{ typing: typingVisible }">{{ subtitle }}</div>
       </div>
 
+      <button class="head-icon-btn" title="搜索当前聊天" @click="toggleSearch">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      </button>
+
+      <button v-if="type === 'group'" class="head-icon-btn" title="群成员" @click="$emit('open-group', chat)">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      </button>
+
       <button class="head-icon-btn" title="更多" @click="openMenu">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="19" cy="12" r="1.7" /></svg>
       </button>
     </header>
 
+    <div v-if="searchOpen" class="chat-search">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input v-model="searchQuery" type="text" placeholder="搜索当前聊天…" />
+      <span v-if="searchQuery" class="chat-search-count">{{ displayedMessages.length }} 条</span>
+      <button class="chat-search-close" title="关闭搜索" @click="closeSearch">×</button>
+    </div>
+
     <div ref="messagesEl" class="messages">
-      <div v-if="messages.length === 0 && !typingVisible" class="chat-empty">
+      <div v-if="store.hasOlder" class="load-older">
+        <button :disabled="store.olderLoading" @click="loadOlder">
+          {{ store.olderLoading ? '加载中…' : '加载更早的消息' }}
+        </button>
+      </div>
+
+      <div v-if="!searchQuery && displayedMessages.length === 0 && !typingVisible" class="chat-empty">
         <div class="empty-star">
           <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3.5 9.2l5.9-.9L12 3z" /></svg>
         </div>
@@ -31,7 +52,12 @@
         <p class="empty-desc">{{ emptyDesc }}</p>
       </div>
 
-      <template v-for="(m, i) in messages" :key="m.id">
+      <div v-if="searchQuery && displayedMessages.length === 0" class="chat-empty">
+        <p class="empty-title">没有找到相关消息</p>
+        <p class="empty-desc">换个关键词试试</p>
+      </div>
+
+      <template v-for="(m, i) in displayedMessages" :key="m.id">
         <div v-if="showDivider(i)" class="time-divider">
           <span>{{ fmtDivider(m.ts) }}</span>
         </div>
@@ -54,6 +80,10 @@
             <div v-if="type === 'group' && m.role !== 'user'" class="sender-name">
               {{ m.senderName }}
             </div>
+            <div v-if="m.quote" class="bubble-quote">
+              <span class="bq-name">{{ m.quote.senderName }}</span>
+              <span class="bq-text">{{ m.quote.content }}</span>
+            </div>
             <div v-if="m.images?.length" class="bubble-images">
               <img
                 v-for="(img, idx) in m.images"
@@ -65,6 +95,17 @@
             </div>
             <div v-if="m.content" class="bubble">{{ m.content }}</div>
             <div class="bubble-time">{{ fmtClock(m.ts) }}</div>
+            <div class="msg-actions">
+              <button title="复制" @click.stop="copyMessage(m)">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              </button>
+              <button title="引用" @click.stop="quoteMessage(m)">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>
+              </button>
+              <button title="删除" @click.stop="removeMessage(m)">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              </button>
+            </div>
           </div>
         </div>
       </template>
@@ -81,6 +122,14 @@
     </div>
 
     <footer class="composer">
+      <div v-if="quotedMessage" class="quote-preview">
+        <div class="quote-preview-body">
+          <b>引用 {{ quotedMessage.senderName }}</b>
+          <span>{{ quotedMessage.content }}</span>
+        </div>
+        <button title="取消引用" @click="quotedMessage = null">×</button>
+      </div>
+
       <div v-if="pendingImages.length" class="pending-images">
         <div v-for="(img, i) in pendingImages" :key="i" class="pending-img">
           <img :src="img" alt="待发送图片" />
@@ -101,6 +150,15 @@
             @input="autoResize"
           ></textarea>
           <button
+            v-if="store.sending"
+            class="send-btn stop"
+            title="停止生成"
+            @click="stopGenerating()"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2" /></svg>
+          </button>
+          <button
+            v-else
             class="send-btn"
             :class="{ disabled: !canSend }"
             :disabled="!canSend"
@@ -117,6 +175,10 @@
             <span>图片</span>
           </button>
           <input ref="imageInput" type="file" accept="image/*" style="display: none" @change="onImagePicked" />
+          <button v-if="type === 'group'" class="tool-btn mention-btn" :disabled="store.sending" title="点名群成员" @click="openMentionMenu">
+            <span>@</span>
+            <span>点名</span>
+          </button>
           <ContextRing class="composer-ctx" :used="contextUsed" :limit="contextLimit" align="right" pop-direction="up" :size="22" />
         </div>
       </div>
@@ -125,12 +187,13 @@
 </template>
 
 <script setup>
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch, onUnmounted } from 'vue'
 import StarryAvatar from './StarryAvatar.vue'
 import { useStarryStore } from '../../stores/starry'
 import { useSettingsStore } from '../../stores/settings'
 import { useMemoryStore } from '../../stores/memory'
 import { buildCharacterMemoryContext } from '../../utils/memoryContext'
+import { compressImageDataUrl } from '../../utils/image'
 import { generateCharacterReply, isApiConfigured, selectRepliers, buildSystemPrompt, buildHistory } from '../../services/starry'
 import ContextRing from '../common/ContextRing.vue'
 import { estimateMessagesTokens } from '../../utils/contextUsage'
@@ -147,7 +210,22 @@ const settings = useSettingsStore()
 const memory = useMemoryStore()
 
 function memoryContextFor(friend, group = null) {
-  return buildCharacterMemoryContext({ friend, group, memoryStore: memory, starryStore: store })
+  const chatId = group ? group.id : friend.id
+  const list = store.getMessages(chatId)
+  const userMessages = list.filter(m => m.role === 'user' && m.content)
+  let relation = ''
+  if (userMessages.length) {
+    const count = userMessages.length
+    const level = count >= 60 ? '很熟悉' : count >= 20 ? '比较熟悉' : count >= 5 ? '逐渐熟悉' : '刚刚认识'
+    const topics = userMessages
+      .slice(-5)
+      .map(m => String(m.content).replace(/\s+/g, ' ').slice(0, 30))
+      .join('；')
+    relation = `【关系状态】\n你与用户已经进行了约 ${count} 轮对话，关系${level}。最近聊到：${topics}。请自然延续，不要生硬复述。`
+  }
+  return [relation, buildCharacterMemoryContext({ friend, group, memoryStore: memory, starryStore: store })]
+    .filter(Boolean)
+    .join('\n\n')
 }
 
 const messagesEl = ref(null)
@@ -158,6 +236,18 @@ const pendingImages = ref([])
 
 const messages = computed(() => store.messages)
 const userName = computed(() => settings.userName || '我')
+const searchOpen = ref(false)
+const searchQuery = ref('')
+const quotedMessage = ref(null)
+
+const displayedMessages = computed(() => {
+  const needle = searchQuery.value.trim().toLowerCase()
+  if (!needle) return messages.value
+  return messages.value.filter(message =>
+    String(message.content || '').toLowerCase().includes(needle) ||
+    String(message.senderName || '').toLowerCase().includes(needle)
+  )
+})
 
 // 当前窗口实际会发送的上下文（角色设定 + 最近聊天记录）
 const contextUsed = computed(() => {
@@ -167,13 +257,13 @@ const contextUsed = computed(() => {
       store.friends.find(f => f.id === memberId) ||
       { id: memberId || 'member', name: props.chat.name, persona: '' }
     return estimateMessagesTokens([
-      { role: 'system', content: buildSystemPrompt(member, props.chat, memoryContextFor(member, props.chat)) },
+      { role: 'system', content: buildSystemPrompt(member, props.chat, memoryContextFor(member, props.chat), settings.starryReplyLength) },
       ...buildHistory(member.id, messages.value),
     ])
   }
   const memoryContext = memoryContextFor(props.chat)
   return estimateMessagesTokens([
-    { role: 'system', content: buildSystemPrompt(props.chat, null, memoryContext) },
+    { role: 'system', content: buildSystemPrompt(props.chat, null, memoryContext, settings.starryReplyLength) },
     ...buildHistory(props.chat.id, messages.value),
   ])
 })
@@ -191,7 +281,7 @@ const subtitle = computed(() => {
 
 const placeholder = computed(() => {
   if (typingVisible.value) return '对方正在输入…'
-  return '发消息…'
+  return props.type === 'group' ? '发消息…（输入 @ 可点名）' : '发消息…'
 })
 
 const canSend = computed(() =>
@@ -212,6 +302,7 @@ const typingAvatar = computed(() =>
 )
 
 const MOBILE_UA = /Android|iPhone|iPad|iPod|webOS/i.test(navigator.userAgent)
+const MAX_PENDING_IMAGES = 3
 
 function senderAvatar(m) {
   if (m.role !== 'character') return ''
@@ -241,8 +332,8 @@ function fmtDivider(ts) {
 const GAP = 5 * 60 * 1000
 function showDivider(i) {
   if (i === 0) return true
-  const prev = messages.value[i - 1]
-  const cur = messages.value[i]
+  const prev = displayedMessages.value[i - 1]
+  const cur = displayedMessages.value[i]
   return (cur.ts || 0) - (prev.ts || 0) > GAP
 }
 
@@ -253,13 +344,149 @@ function scrollToBottom() {
   })
 }
 
+async function loadOlder() {
+  const el = messagesEl.value
+  const prevHeight = el?.scrollHeight || 0
+  const prevTop = el?.scrollTop || 0
+  const added = store.loadOlderMessages()
+  if (!added) return
+  await nextTick()
+  if (el) el.scrollTop = el.scrollHeight - prevHeight + prevTop
+}
+
+function toggleSearch() {
+  searchOpen.value = !searchOpen.value
+  if (!searchOpen.value) searchQuery.value = ''
+}
+
+function closeSearch() {
+  searchOpen.value = false
+  searchQuery.value = ''
+}
+
+async function copyMessage(message) {
+  const text = String(message.content || '')
+  if (!text) return
+  try {
+    await navigator.clipboard.writeText(text)
+    window.__ui?.showToast('已复制', 'success', 1600)
+  } catch {
+    window.__ui?.showToast('复制失败', 'error', 2000)
+  }
+}
+
+function quoteMessage(message) {
+  quotedMessage.value = {
+    senderName: message.role === 'user' ? (settings.userName || '我') : (message.senderName || props.chat.name),
+    content: String(message.content || '').slice(0, 120),
+  }
+  nextTick(() => inputEl.value?.focus())
+}
+
+async function removeMessage(message) {
+  const ok = await window.__ui?.showConfirm('删除这条消息？此操作不可撤销。', {
+    confirmText: '删除',
+    cancelText: '取消',
+  })
+  if (!ok) return
+  const removed = store.deleteMessage(message.id, props.chat.id)
+  if (removed) window.__ui?.showToast('消息已删除', 'success', 1800)
+}
+
+function exportChat() {
+  const list = store.getAllMessages(props.chat.id)
+  if (!list.length) {
+    window.__ui?.showToast('当前会话没有可导出的内容', 'info', 2500)
+    return
+  }
+  const lines = [
+    `# ${props.chat.name}`,
+    '',
+    `> 导出时间：${new Date().toLocaleString()} · 探索星空`,
+    '',
+  ]
+  for (const message of list) {
+    const name = message.role === 'user' ? (settings.userName || '我') : (message.senderName || props.chat.name)
+    if (message.quote) lines.push(`> 引用 ${message.quote.senderName}：${message.quote.content}`)
+    lines.push(`**${name}**：${message.content || (message.images?.length ? '[图片]' : '')}`)
+    lines.push('')
+  }
+  const safeName = String(props.chat.name || '星空聊天').replace(/[\\/:*?"<>|]/g, '_').slice(0, 50)
+  const blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${safeName}-${new Date().toISOString().slice(0, 10)}.md`
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  window.__ui?.showToast('聊天记录已导出', 'success', 2000)
+}
+
+function openMentionMenu(e) {
+  const members = (props.chat.members || [])
+    .map(id => store.friends.find(friend => friend.id === id))
+    .filter(Boolean)
+  if (!members.length) {
+    window.__ui?.showToast('群聊暂无其他成员', 'info', 2500)
+    return
+  }
+  const rect = e.currentTarget.getBoundingClientRect()
+  window.__ui?.showMenu(
+    Math.max(12, rect.left - 80),
+    rect.bottom + 6,
+    members.map(friend => ({
+      label: friend.name,
+      action: () => {
+        const text = input.value
+        input.value = text ? `${text.replace(/\s+$/, '')} @${friend.name} ` : `@${friend.name} `
+        nextTick(() => {
+          inputEl.value?.focus()
+          const length = input.value.length
+          inputEl.value?.setSelectionRange(length, length)
+          autoResize()
+        })
+      },
+    }))
+  )
+}
+
 watch(messages, () => scrollToBottom(), { deep: true })
 watch(() => store.typingName, () => scrollToBottom())
 watch(() => props.chat.id, () => {
+  stopGenerating(true)
   input.value = ''
   pendingImages.value = []
+  quotedMessage.value = null
+  closeSearch()
   scrollToBottom()
 })
+
+onUnmounted(() => stopGenerating(true))
+
+let activeAbort = null
+
+function stopGenerating(silent = false) {
+  if (activeAbort) {
+    activeAbort.abort()
+    activeAbort = null
+  }
+  store.resetRuntime()
+  if (!silent) window.__ui?.showToast('已停止生成', 'info', 2000)
+}
+
+async function generateWithRetry(options, retries = 1) {
+  let lastError
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await generateCharacterReply(options)
+    } catch (err) {
+      if (err?.name === 'AbortError') throw err
+      lastError = err
+      if (attempt < retries) await delay(600 + Math.random() * 400)
+    }
+  }
+  throw lastError
+}
 
 function autoResize() {
   nextTick(() => {
@@ -296,26 +523,36 @@ function onImagePicked(e) {
   const file = e.target.files?.[0]
   e.target.value = ''
   if (!file || !file.type.startsWith('image/')) return
+  if (pendingImages.value.length >= MAX_PENDING_IMAGES) {
+    window.__ui?.showToast(`单次最多发送 ${MAX_PENDING_IMAGES} 张图片`, 'info', 2600)
+    return
+  }
 
   const reader = new FileReader()
-  reader.onload = (ev) => {
-    const img = new Image()
-    img.onload = () => {
-      const maxSide = 1024
-      const scale = Math.min(1, maxSide / Math.max(img.width, img.height))
-      if (scale === 1) {
-        pendingImages.value.push(ev.target.result)
-        return
-      }
-      const canvas = document.createElement('canvas')
-      canvas.width = Math.round(img.width * scale)
-      canvas.height = Math.round(img.height * scale)
-      const ctx = canvas.getContext('2d')
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-      pendingImages.value.push(canvas.toDataURL('image/jpeg', 0.82))
+  reader.onload = async (ev) => {
+    let dataUrl = await compressImageDataUrl(ev.target.result, {
+      maxWidth: 1024,
+      maxHeight: 1024,
+      quality: 0.78,
+      maxBytes: 800000,
+    })
+    if (dataUrl && dataUrl.length > 1200000) {
+      dataUrl = await compressImageDataUrl(dataUrl, {
+        maxWidth: 720,
+        maxHeight: 720,
+        quality: 0.68,
+        maxBytes: 600000,
+      })
     }
-    img.onerror = () => window.__ui?.showToast('图片读取失败，请换一张试试', 'error', 3000)
-    img.src = ev.target.result
+    if (!dataUrl) {
+      window.__ui?.showToast('图片读取失败或体积过大，请换一张试试', 'error', 3000)
+      return
+    }
+    if (pendingImages.value.length >= MAX_PENDING_IMAGES) {
+      window.__ui?.showToast(`单次最多发送 ${MAX_PENDING_IMAGES} 张图片`, 'info', 2600)
+      return
+    }
+    pendingImages.value.push(dataUrl)
   }
   reader.onerror = () => window.__ui?.showToast('图片读取失败，请换一张试试', 'error', 3000)
   reader.readAsDataURL(file)
@@ -329,7 +566,8 @@ async function send() {
   }
 
   const text = input.value.trim()
-  const images = pendingImages.value.slice()
+  const images = pendingImages.value.slice(0, MAX_PENDING_IMAGES)
+  const quote = quotedMessage.value ? { ...quotedMessage.value } : null
   const targetId = props.chat.id
   const targetType = props.type
   const targetChat = { ...props.chat }
@@ -337,6 +575,7 @@ async function send() {
 
   input.value = ''
   pendingImages.value = []
+  quotedMessage.value = null
   nextTick(autoResize)
 
   store.appendMessage({
@@ -345,22 +584,32 @@ async function send() {
     senderName,
     content: text,
     ...(images.length ? { images } : {}),
+    ...(quote ? { quote } : {}),
     ts: Date.now(),
   }, targetId)
 
+  const controller = new AbortController()
+  activeAbort = controller
   store.sending = true
   store.generatingChatId = targetId
 
   try {
     if (targetType === 'friend') {
       store.typingName = targetChat.name
-      await delay(300 + Math.random() * 300)
-      const reply = await generateCharacterReply({
+      const replyPromise = generateWithRetry({
         friend: targetChat,
         messages: store.getMessages(targetId),
         settings,
         memoryContext: memoryContextFor(targetChat),
-      })
+        signal: controller.signal,
+      }, 1)
+        .then(reply => ({ reply }))
+        .catch(error => ({ error }))
+      await delay(300 + Math.random() * 300)
+      const outcome = await replyPromise
+      if (outcome.error) throw outcome.error
+      const reply = outcome.reply
+      if (controller.signal.aborted) return
       store.appendMessage({
         role: 'character',
         senderId: targetChat.id,
@@ -380,34 +629,61 @@ async function send() {
       return
     }
 
-    const repliers = selectRepliers(members)
-    for (const friend of repliers) {
-      if (!store.friends.some(f => f.id === friend.id)) continue
-      store.typingName = friend.name
-      await delay(300 + Math.random() * 300)
-      try {
-        const reply = await generateCharacterReply({
-          friend,
-          group: targetChat,
-          messages: store.getMessages(targetId),
-          settings,
-          memoryContext: memoryContextFor(friend, targetChat),
-        })
-        store.appendMessage({
-          role: 'character',
-          senderId: friend.id,
-          senderName: friend.name,
-          content: reply,
-          ts: Date.now(),
-        }, targetId)
-      } catch (err) {
-        window.__ui?.showToast(`${friend.name} 回复失败：${err.message}`, 'error', 3500)
+    // @ 点名只让被点名者回复；普通消息优先相关角色，最多随机 3 位
+    const mentions = members
+      .filter(friend => text.includes(`@${friend.name}`))
+      .map(friend => friend.id)
+    const activityMax = settings.starryActivity === 'low' ? 1 : settings.starryActivity === 'high' ? 3 : 2
+    const repliers = selectRepliers(members, { mentions, text, max: activityMax })
+    if (!repliers.length) return
+
+    store.typingName = repliers.length > 1
+      ? `${repliers[0].name} 等 ${repliers.length} 人`
+      : repliers[0].name
+    if (controller.signal.aborted) return
+
+    // 并行发起请求，按返回顺序错峰展示，避免串行等待
+    const tasks = repliers.map(friend =>
+      generateWithRetry({
+        friend,
+        group: targetChat,
+        messages: store.getMessages(targetId),
+        settings,
+        memoryContext: memoryContextFor(friend, targetChat),
+        signal: controller.signal,
+      }, 1)
+        .then(reply => ({ friend, reply }))
+        .catch(error => ({ friend, error }))
+    )
+
+    await delay(250 + Math.random() * 250)
+    for (let i = 0; i < tasks.length; i += 1) {
+      const outcome = await tasks[i]
+      if (controller.signal.aborted) break
+      if (outcome.error) {
+        if (outcome.error.name !== 'AbortError') {
+          window.__ui?.showToast(`${outcome.friend.name} 回复失败：${outcome.error.message || '请稍后重试'}`, 'error', 3500)
+        }
+        continue
       }
-      await delay(200 + Math.random() * 200)
+
+      store.typingName = outcome.friend.name
+      await delay(250 + Math.random() * 300)
+      if (controller.signal.aborted) break
+      store.appendMessage({
+        role: 'character',
+        senderId: outcome.friend.id,
+        senderName: outcome.friend.name,
+        content: outcome.reply,
+        ts: Date.now(),
+      }, targetId)
     }
   } catch (err) {
-    window.__ui?.showToast(`回复失败：${err.message}`, 'error', 3500)
+    if (err?.name !== 'AbortError') {
+      window.__ui?.showToast(`回复失败：${err.message}`, 'error', 3500)
+    }
   } finally {
+    if (activeAbort === controller) activeAbort = null
     store.resetRuntime()
   }
 }
@@ -419,12 +695,14 @@ function openMenu(e) {
   if (props.type === 'friend') {
     window.__ui?.showMenu(x, y, [
       { label: '编辑资料', action: () => emit('open-friend', props.chat) },
+      { label: '导出聊天记录', action: exportChat },
       { label: '清空聊天记录', action: clearChat },
       { label: '删除好友', action: deleteFriend },
     ])
   } else {
     window.__ui?.showMenu(x, y, [
       { label: '群成员管理', action: () => emit('open-group', props.chat) },
+      { label: '导出聊天记录', action: exportChat },
       { label: '清空聊天记录', action: clearChat },
       { label: '删除群聊', action: deleteGroup },
     ])
@@ -525,6 +803,132 @@ async function deleteGroup() {
   overflow-y: auto;
   overscroll-behavior: none;
   padding: 16px 20px 10px;
+}
+
+.chat-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+.chat-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+}
+.chat-search-count { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+.chat-search-close {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.msg-actions {
+  display: flex;
+  gap: 2px;
+  margin-top: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.message-row:hover .msg-actions { opacity: 1; }
+.msg-actions button {
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.msg-actions button:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+.bubble-quote {
+  margin-bottom: 5px;
+  padding: 5px 8px;
+  border-left: 2px solid var(--accent);
+  border-radius: 4px;
+  background: var(--bg-hover);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  max-width: 260px;
+}
+.bq-name { color: var(--accent); font-weight: 600; margin-right: 6px; }
+.bq-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.quote-preview {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 6px;
+  padding: 7px 10px;
+  border-left: 2px solid var(--accent);
+  border-radius: 6px;
+  background: var(--bg-hover);
+}
+.quote-preview-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.quote-preview-body b { color: var(--accent); font-size: 11px; }
+.quote-preview-body span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.quote-preview > button {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+}
+.mention-btn span:first-child { font-weight: 700; }
+
+@media (max-width: 768px) {
+  .msg-actions { opacity: 0.55; }
+}
+.load-older {
+  display: flex;
+  justify-content: center;
+  padding: 2px 0 10px;
+}
+.load-older button {
+  padding: 5px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--bg-card);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.load-older button:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+.load-older button:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .chat-empty {
@@ -748,6 +1152,13 @@ async function deleteGroup() {
 }
 .send-btn:hover:not(.disabled) {
   background: var(--accent-hover);
+}
+.send-btn.stop {
+  background: var(--danger);
+}
+.send-btn.stop:hover {
+  background: var(--danger);
+  opacity: 0.88;
 }
 .send-btn.disabled {
   background: var(--bg-hover);

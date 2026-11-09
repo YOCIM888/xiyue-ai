@@ -12,6 +12,34 @@ import { applySymbolStyles } from '../../utils/symbolStyles'
 
 marked.setOptions({ breaks: true, gfm: true })
 
+// 文档预览等场景使用：移除脚本、事件属性与危险链接
+const BLOCKED_TAGS = new Set(['script', 'iframe', 'object', 'embed', 'link', 'meta', 'style', 'form', 'base'])
+function sanitizeHtml(html) {
+  try {
+    const doc = new DOMParser().parseFromString(String(html || ''), 'text/html')
+    for (const el of doc.querySelectorAll('*')) {
+      if (BLOCKED_TAGS.has(el.tagName.toLowerCase())) {
+        el.remove()
+        continue
+      }
+      for (const attr of [...el.attributes]) {
+        const name = attr.name.toLowerCase()
+        if (name.startsWith('on')) {
+          el.removeAttribute(attr.name)
+        } else if (name === 'href' || name === 'src' || name === 'xlink:href') {
+          const normalized = attr.value.replace(/[\u0000-\u001f\s]+/g, '')
+          if (/^(javascript|vbscript|data:text\/html)/i.test(normalized)) {
+            el.removeAttribute(attr.name)
+          }
+        }
+      }
+    }
+    return doc.body.innerHTML
+  } catch {
+    return html
+  }
+}
+
 // 图表代码块：mermaid / echarts，改为占位符，挂载后异步渲染
 const DIAGRAM_LANGS = { mermaid: 'mermaid', echarts: 'echarts', chart: 'echarts' }
 
@@ -48,6 +76,7 @@ marked.use({ renderer })
 const props = defineProps({
   content: { type: String, default: '' },
   symbolStyle: { type: Boolean, default: false },
+  sanitize: { type: Boolean, default: false },
 })
 
 const settings = useSettingsStore()
@@ -59,7 +88,8 @@ const renderedHtml = computed(() => {
   } catch {
     html = props.content.replace(/</g, '&lt;').replace(/\n/g, '<br>')
   }
-  return props.symbolStyle ? applySymbolStyles(html, settings.symbolRules) : html
+  const output = props.symbolStyle ? applySymbolStyles(html, settings.symbolRules) : html
+  return props.sanitize ? sanitizeHtml(output) : output
 })
 
 // ---- 图表渲染（按需动态加载，不进首屏包） ----
@@ -212,6 +242,20 @@ onUnmounted(() => {
 })
 
 function onClick(e) {
+  // 文档预览：外链改为新标签打开，避免把应用页面导航走
+  if (props.sanitize) {
+    const link = e.target.closest('a')
+    if (link) {
+      const href = link.getAttribute('href') || ''
+      if (href && !href.startsWith('#')) {
+        e.preventDefault()
+        if (/^(https?:|mailto:)/i.test(href)) {
+          window.open(href, '_blank', 'noopener,noreferrer')
+        }
+        return
+      }
+    }
+  }
   const btn = e.target.closest('.code-copy-btn')
   if (!btn) return
   const raw = btn.dataset.code

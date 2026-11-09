@@ -37,6 +37,40 @@
 
         <div v-else class="memory-body">
           <div class="memory-access-card">
+            <div class="mac-head">记忆沉淀</div>
+
+            <div class="access-row">
+              <div class="msc-info">
+                <div class="msc-title">自动沉淀</div>
+                <div class="msc-desc">每隔若干轮对话自动提炼长期记忆；关闭后只保留手动「记住…」</div>
+              </div>
+              <label class="switch" :title="store.autoEnabled ? '关闭自动沉淀' : '开启自动沉淀'">
+                <input v-model="store.autoEnabled" type="checkbox" />
+                <span class="switch-track"><span class="switch-thumb"></span></span>
+              </label>
+            </div>
+
+            <div class="access-row" :class="{ disabled: !store.autoEnabled }">
+              <div class="msc-info">
+                <div class="msc-title">触发轮数</div>
+                <div class="msc-desc">每 {{ store.autoTurns }} 轮用户消息后自动沉淀一次</div>
+              </div>
+              <div class="turns-control">
+                <input
+                  v-model.number="store.autoTurns"
+                  type="number"
+                  min="2"
+                  max="50"
+                  step="1"
+                  :disabled="!store.autoEnabled"
+                  @change="normalizeAutoTurns"
+                />
+                <span>轮</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="memory-access-card">
             <div class="mac-head">记忆读取权限</div>
 
             <div class="access-row">
@@ -94,9 +128,6 @@
               </label>
             </div>
           </div>
-          <p class="access-hint">
-            主记忆是读取长期记忆的总开关。关闭后，两个「读取主记忆」子开关不可用；私聊与群聊互读不受影响。所有读取都会自动限制条数和长度。
-          </p>
 
           <div v-if="selectMode" class="select-bar">
             <span>已选 {{ selected.length }} 项</span>
@@ -165,6 +196,11 @@ defineExpose({ open, close })
 function fmtTime(ts) {
   const d = new Date(ts)
   return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+function normalizeAutoTurns() {
+  const turns = Math.round(Number(store.autoTurns) || 10)
+  store.autoTurns = Math.min(50, Math.max(2, turns))
 }
 
 function createNew() {
@@ -270,6 +306,21 @@ async function deleteSelected() {
 .access-row.disabled .switch,
 .access-row.disabled input { cursor: not-allowed; }
 .access-hint { margin: 0 4px 14px; font-size: 12px; line-height: 1.6; color: var(--text-muted); }
+.turns-control { flex-shrink: 0; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); }
+.turns-control input {
+  width: 58px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: inherit;
+  text-align: center;
+  outline: none;
+}
+.turns-control input:focus { border-color: var(--accent); }
+.turns-control input:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .switch { flex-shrink: 0; cursor: pointer; display: inline-flex; }
 .switch input { position: absolute; opacity: 0; width: 0; height: 0; }

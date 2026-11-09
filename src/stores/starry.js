@@ -6,7 +6,14 @@ const FRIENDS_KEY = 'xiyue_starry_friends'
 const GROUPS_KEY = 'xiyue_starry_groups'
 const ACTIVE_KEY = 'xiyue_starry_active'
 const MSG_PREFIX = 'xiyue_starry_msgs_'
+const MSG_META_SUFFIX = '__meta'
+const MSG_ARCHIVE_SUFFIX = '__archive_'
 const AVATAR_MIGRATION_KEY = 'xiyue_starry_default_avatars'
+
+// 聊天窗口只保留最近 RECENT_LIMIT 条；更早的消息按 ARCHIVE_CHUNK_SIZE 分片归档
+const RECENT_LIMIT = 80
+const ARCHIVE_CHUNK_SIZE = 100
+let storageWarnAt = 0
 
 export const DEFAULT_FRIENDS = [
   {
@@ -38,7 +45,7 @@ export const DEFAULT_GROUP = {
   members: ['star-friend-xiyue', 'star-friend-yunxi', 'star-friend-chuhan'],
 }
 
-function loadJSON(key, fallback) {
+function readJSON(key, fallback) {
   try {
     const raw = getItem(key)
     if (raw === null) return fallback
@@ -49,18 +56,235 @@ function loadJSON(key, fallback) {
   }
 }
 
-function readMessages(chatId) {
-  if (!chatId) return []
-  const data = loadJSON(MSG_PREFIX + chatId, [])
-  return Array.isArray(data) ? data : []
+function readStoredArray(key) {
+  try {
+    const raw = getItem(key)
+    if (raw === null) return null
+    const data = JSON.parse(raw)
+    return Array.isArray(data) ? data : null
+  } catch {
+    return null
+  }
 }
 
-function writeMessages(chatId, list) {
-  if (!chatId) return
+function normalizeFriend(raw, index) {
+  if (!raw || typeof raw !== 'object') return null
+  const name = String(raw.name || '').trim()
+  if (!name) return null
+  const createdAt = Number(raw.createdAt) || Date.now()
+  return {
+    ...raw,
+    id: typeof raw.id === 'string' && raw.id ? raw.id : `star-friend-recovered-${Date.now()}-${index}`,
+    name,
+    persona: typeof raw.persona === 'string' ? raw.persona : '',
+    avatar: typeof raw.avatar === 'string' ? raw.avatar : '',
+    fixed: raw.fixed === true,
+    createdAt,
+    updatedAt: Number(raw.updatedAt) || createdAt,
+    lastMessage: typeof raw.lastMessage === 'string' ? raw.lastMessage : '',
+    lastTs: Number(raw.lastTs) || 0,
+    unread: Math.max(0, Math.floor(Number(raw.unread) || 0)),
+    pinned: raw.pinned === true,
+  }
+}
+
+function loadFriends() {
+  const data = readStoredArray(FRIENDS_KEY)
+  if (!data) return null
+  const seen = new Set()
+  const list = []
+  data.forEach((raw, index) => {
+    const friend = normalizeFriend(raw, index)
+    if (!friend) return
+    if (seen.has(friend.id)) friend.id = `star-friend-recovered-${Date.now()}-${index}`
+    seen.add(friend.id)
+    list.push(friend)
+  })
+  return list
+}
+
+function normalizeGroup(raw, friends, index) {
+  if (!raw || typeof raw !== 'object') return null
+  const name = String(raw.name || '').trim()
+  if (!name) return null
+  const friendIds = new Set(friends.map(friend => friend.id))
+  const members = Array.isArray(raw.members)
+    ? [...new Set(raw.members.filter(id => typeof id === 'string' && friendIds.has(id)))]
+    : []
+  const createdAt = Number(raw.createdAt) || Date.now()
+  return {
+    ...raw,
+    id: typeof raw.id === 'string' && raw.id ? raw.id : `star-group-recovered-${Date.now()}-${index}`,
+    name,
+    members,
+    createdAt,
+    updatedAt: Number(raw.updatedAt) || createdAt,
+    lastMessage: typeof raw.lastMessage === 'string' ? raw.lastMessage : '',
+    lastTs: Number(raw.lastTs) || 0,
+    unread: Math.max(0, Math.floor(Number(raw.unread) || 0)),
+    pinned: raw.pinned === true,
+  }
+}
+
+function loadGroups(friends) {
+  const data = readStoredArray(GROUPS_KEY)
+  if (!data) return []
+  const seen = new Set()
+  const list = []
+  data.forEach((raw, index) => {
+    const group = normalizeGroup(raw, friends, index)
+    if (!group) return
+    if (seen.has(group.id)) group.id = `star-group-recovered-${Date.now()}-${index}`
+    seen.add(group.id)
+    list.push(group)
+  })
+  return list
+}
+
+function notifyStorageError() {
+  if (Date.now() - storageWarnAt < 8000) return
+  storageWarnAt = Date.now()
+  window.__ui?.showToast('星空聊天记录保存失败：本地存储空间不足，请到 设置 → 数据设置 清理旧数据。', 'error', 6000)
+}
+
+function msgMetaKey(chatId) {
+  return `${MSG_PREFIX}${chatId}${MSG_META_SUFFIX}`
+}
+
+function msgArchiveKey(chatId, index) {
+  return `${MSG_PREFIX}${chatId}${MSG_ARCHIVE_SUFFIX}${index}`
+}
+
+function readMeta(chatId) {
   try {
-    setItem(MSG_PREFIX + chatId, JSON.stringify(list))
+    const raw = getItem(msgMetaKey(chatId))
+    if (!raw) return null
+    const data = JSON.parse(raw)
+    if (!data || data.version !== 2) return null
+    return {
+      version: 2,
+      chunks: Math.max(0, Math.floor(Number(data.chunks) || 0)),
+      archived: Math.max(0, Math.floor(Number(data.archived) || 0)),
+      updatedAt: Number(data.updatedAt) || 0,
+    }
   } catch {
-    /* 存储空间不足时忽略 */
+    return null
+  }
+}
+
+function writeJSON(key, value) {
+  try {
+    setItem(key, JSON.stringify(value))
+    return true
+  } catch {
+    notifyStorageError()
+    return false
+  }
+}
+
+function writeMeta(chatId, meta) {
+  return writeJSON(msgMetaKey(chatId), {
+    ...meta,
+    version: 2,
+    updatedAt: Date.now(),
+  })
+}
+
+function readArray(key) {
+  try {
+    const raw = getItem(key)
+    if (!raw) return []
+    const data = JSON.parse(raw)
+    return Array.isArray(data) ? data : []
+  } catch {
+    return []
+  }
+}
+
+function writeRecent(chatId, list) {
+  return writeJSON(`${MSG_PREFIX}${chatId}`, list)
+}
+
+function readArchiveChunk(chatId, index) {
+  return readArray(msgArchiveKey(chatId, index))
+}
+
+function writeArchiveChunk(chatId, index, list) {
+  return writeJSON(msgArchiveKey(chatId, index), list)
+}
+
+function appendToArchive(chatId, messages) {
+  const meta = readMeta(chatId) || { version: 2, chunks: 0, archived: 0, updatedAt: 0 }
+  if (!messages.length) return meta
+
+  const pending = [...messages]
+  let index = meta.chunks - 1
+  let chunk = index >= 0 ? readArchiveChunk(chatId, index) : []
+  if (meta.chunks === 0) {
+    meta.chunks = 1
+    index = 0
+    chunk = []
+  } else if (chunk.length >= ARCHIVE_CHUNK_SIZE) {
+    index += 1
+    meta.chunks += 1
+    chunk = []
+  }
+
+  while (pending.length) {
+    if (chunk.length >= ARCHIVE_CHUNK_SIZE) {
+      index += 1
+      meta.chunks += 1
+      chunk = []
+    }
+    const part = pending.splice(0, ARCHIVE_CHUNK_SIZE - chunk.length)
+    chunk = chunk.concat(part)
+    writeArchiveChunk(chatId, index, chunk)
+    meta.archived += part.length
+  }
+
+  writeMeta(chatId, meta)
+  return meta
+}
+
+/** 兼容旧版整段数组：首次读取时拆成最近窗口 + 归档分片 */
+function migrateChatStorage(chatId) {
+  const existing = readMeta(chatId)
+  if (existing) return existing
+
+  const legacy = readArray(`${MSG_PREFIX}${chatId}`)
+  const recent = legacy.length > RECENT_LIMIT ? legacy.slice(-RECENT_LIMIT) : legacy
+  const archived = legacy.length > RECENT_LIMIT ? legacy.slice(0, -RECENT_LIMIT) : []
+
+  writeRecent(chatId, recent)
+  let meta = { version: 2, chunks: 0, archived: 0, updatedAt: Date.now() }
+  writeMeta(chatId, meta)
+  if (archived.length) meta = appendToArchive(chatId, archived)
+  return meta
+}
+
+function readRecentMessages(chatId) {
+  if (!chatId) return []
+  migrateChatStorage(chatId)
+  return readArray(`${MSG_PREFIX}${chatId}`).slice(-RECENT_LIMIT)
+}
+
+function appendStoredMessage(chatId, full) {
+  migrateChatStorage(chatId)
+  const recent = readArray(`${MSG_PREFIX}${chatId}`)
+  recent.push(full)
+  const overflow = recent.length > RECENT_LIMIT ? recent.splice(0, recent.length - RECENT_LIMIT) : []
+  writeRecent(chatId, recent)
+  const meta = overflow.length ? appendToArchive(chatId, overflow) : (readMeta(chatId) || { chunks: 0 })
+  return { recent, meta }
+}
+
+function clearChatStorage(chatId) {
+  if (!chatId) return
+  const meta = readMeta(chatId)
+  removeItem(`${MSG_PREFIX}${chatId}`)
+  removeItem(msgMetaKey(chatId))
+  if (meta) {
+    for (let i = 0; i < meta.chunks; i += 1) removeItem(msgArchiveKey(chatId, i))
   }
 }
 
@@ -75,18 +299,24 @@ function makeMessageId() {
 }
 
 export const useStarryStore = defineStore('starry', () => {
-  const friends = ref(loadJSON(FRIENDS_KEY, []))
-  const groups = ref(loadJSON(GROUPS_KEY, []))
+  const friends = ref([])
+  const groups = ref([])
 
   const activeType = ref('') // 'friend' | 'group' | ''
   const activeId = ref('')
   const messages = ref([])
+  const archiveChunkCount = ref(0)
+  const loadedArchiveChunks = ref(0)
+  const olderLoading = ref(false)
 
   const sending = ref(false)
   const typingName = ref('')
   const generatingChatId = ref('')
+  const viewActive = ref(false)
 
   let initialized = false
+
+  const hasOlder = computed(() => loadedArchiveChunks.value < archiveChunkCount.value)
 
   function persistFriends() {
     setItem(FRIENDS_KEY, JSON.stringify(friends.value))
@@ -166,23 +396,54 @@ export const useStarryStore = defineStore('starry', () => {
   }
 
   function loadMessages(chatId = activeId.value) {
-    messages.value = readMessages(chatId)
+    if (!chatId) {
+      messages.value = []
+      archiveChunkCount.value = 0
+      loadedArchiveChunks.value = 0
+      return
+    }
+    const meta = migrateChatStorage(chatId)
+    messages.value = readRecentMessages(chatId)
+    archiveChunkCount.value = meta.chunks
+    loadedArchiveChunks.value = 0
+  }
+
+  function loadOlderMessages(chatId = activeId.value) {
+    if (!chatId || chatId !== activeId.value || olderLoading.value) return 0
+    const meta = migrateChatStorage(chatId)
+    archiveChunkCount.value = meta.chunks
+    if (loadedArchiveChunks.value >= meta.chunks) return 0
+
+    olderLoading.value = true
+    try {
+      const index = meta.chunks - 1 - loadedArchiveChunks.value
+      const chunk = readArchiveChunk(chatId, index)
+      loadedArchiveChunks.value += 1
+      if (!chunk.length) return 0
+      const existing = new Set(messages.value.map(msg => msg.id))
+      const older = chunk.filter(msg => !existing.has(msg.id))
+      if (older.length) messages.value = [...older, ...messages.value]
+      return older.length
+    } finally {
+      olderLoading.value = false
+    }
   }
 
   function init() {
     if (initialized) return
     initialized = true
 
-    // 仅在从未初始化过（键不存在）时播种默认数据；删空后刷新不会复活
-    if (getItem(FRIENDS_KEY) === null) {
+    // 仅在从未初始化或数据损坏时播种默认数据；删空后刷新不会复活
+    const storedFriends = loadFriends()
+    if (storedFriends === null) {
       seedDefaults()
     } else {
-      friends.value = loadJSON(FRIENDS_KEY, [])
-      groups.value = loadJSON(GROUPS_KEY, [])
+      friends.value = storedFriends
+      groups.value = loadGroups(storedFriends)
     }
     applyDefaultAvatars()
 
-    const saved = loadJSON(ACTIVE_KEY, null)
+    const saved = readJSON(ACTIVE_KEY, null)
     if (saved && typeof saved === 'object') {
       activeType.value = saved.type === 'friend' || saved.type === 'group' ? saved.type : ''
       activeId.value = typeof saved.id === 'string' ? saved.id : ''
@@ -197,15 +458,125 @@ export const useStarryStore = defineStore('starry', () => {
     activeId.value = id
     persistActive()
     loadMessages(id)
+    markRead(type, id)
+  }
+
+  function markRead(type, id) {
+    const item = type === 'friend'
+      ? friends.value.find(friend => friend.id === id)
+      : groups.value.find(group => group.id === id)
+    if (!item || !item.unread) return
+    item.unread = 0
+    if (type === 'friend') persistFriends()
+    else persistGroups()
+  }
+
+  function togglePin(type, id) {
+    const item = type === 'friend'
+      ? friends.value.find(friend => friend.id === id)
+      : groups.value.find(group => group.id === id)
+    if (!item) return
+    item.pinned = !item.pinned
+    if (type === 'friend') persistFriends()
+    else persistGroups()
+  }
+
+  function setViewActive(value) {
+    viewActive.value = !!value
+    if (viewActive.value) markRead(activeType.value, activeId.value)
+  }
+
+  function bumpUnread(chatId) {
+    const friend = friends.value.find(item => item.id === chatId)
+    if (friend) {
+      friend.unread = Math.max(0, Number(friend.unread) || 0) + 1
+      persistFriends()
+      return
+    }
+    const group = groups.value.find(item => item.id === chatId)
+    if (group) {
+      group.unread = Math.max(0, Number(group.unread) || 0) + 1
+      persistGroups()
+    }
+  }
+
+  function getAllMessages(chatId = activeId.value) {
+    if (!chatId) return []
+    const meta = migrateChatStorage(chatId)
+    const all = []
+    for (let i = 0; i < meta.chunks; i += 1) {
+      all.push(...readArchiveChunk(chatId, i))
+    }
+    all.push(...readArray(`${MSG_PREFIX}${chatId}`))
+    return all
+  }
+
+  function searchMessages(query, limit = 20) {
+    const needle = String(query || '').trim().toLowerCase()
+    if (!needle) return []
+    const results = []
+    const chats = [
+      ...friends.value.map(friend => ({ type: 'friend', id: friend.id, name: friend.name })),
+      ...groups.value.map(group => ({ type: 'group', id: group.id, name: group.name })),
+    ]
+    for (const chat of chats) {
+      for (const message of getAllMessages(chat.id)) {
+        const content = String(message.content || '')
+        if (!content || !content.toLowerCase().includes(needle)) continue
+        results.push({
+          type: chat.type,
+          chatId: chat.id,
+          chatName: chat.name,
+          messageId: message.id,
+          senderName: message.role === 'user' ? '我' : (message.senderName || chat.name),
+          content: content.slice(0, 120),
+          ts: Number(message.ts) || 0,
+        })
+        if (results.length >= limit) return results.sort((a, b) => b.ts - a.ts)
+      }
+    }
+    return results.sort((a, b) => b.ts - a.ts)
+  }
+
+  function deleteMessage(messageId, chatId = activeId.value) {
+    if (!chatId || !messageId) return false
+    migrateChatStorage(chatId)
+
+    let removed = false
+    const recent = readArray(`${MSG_PREFIX}${chatId}`)
+    const recentIndex = recent.findIndex(message => message.id === messageId)
+    if (recentIndex >= 0) {
+      recent.splice(recentIndex, 1)
+      writeRecent(chatId, recent)
+      removed = true
+    }
+
+    if (!removed) {
+      const meta = readMeta(chatId)
+      if (meta) {
+        for (let i = 0; i < meta.chunks; i += 1) {
+          const chunk = readArchiveChunk(chatId, i)
+          const chunkIndex = chunk.findIndex(message => message.id === messageId)
+          if (chunkIndex < 0) continue
+          chunk.splice(chunkIndex, 1)
+          writeArchiveChunk(chatId, i, chunk)
+          meta.archived = Math.max(0, meta.archived - 1)
+          writeMeta(chatId, meta)
+          removed = true
+          break
+        }
+      }
+    }
+
+    if (chatId === activeId.value) {
+      messages.value = messages.value.filter(message => message.id !== messageId)
+    }
+    return removed
   }
 
   function getMessages(chatId = activeId.value) {
     if (chatId === activeId.value) return messages.value
-    return readMessages(chatId)
-  }
-
-  function saveMessages() {
-    writeMessages(activeId.value, messages.value)
+    return readRecentMessages(chatId)
   }
 
   function touchPreview(chatId, msg) {
@@ -229,21 +600,23 @@ export const useStarryStore = defineStore('starry', () => {
   function appendMessage(msg, chatId = activeId.value) {
     if (!chatId) return null
     const full = { ...msg, id: msg.id || makeMessageId() }
+    const { meta } = appendStoredMessage(chatId, full)
     if (chatId === activeId.value) {
       messages.value.push(full)
-      saveMessages()
-    } else {
-      const list = readMessages(chatId)
-      list.push(full)
-      writeMessages(chatId, list)
+      archiveChunkCount.value = meta?.chunks ?? archiveChunkCount.value
     }
+    if (chatId !== activeId.value || !viewActive.value) bumpUnread(chatId)
     touchPreview(chatId, full)
     return full
   }
 
   function clearChat(type, id) {
-    removeItem(MSG_PREFIX + id)
-    if (id === activeId.value) messages.value = []
+    clearChatStorage(id)
+    if (id === activeId.value) {
+      messages.value = []
+      archiveChunkCount.value = 0
+      loadedArchiveChunks.value = 0
+    }
     if (type === 'friend') {
       const f = friends.value.find(x => x.id === id)
       if (f) {
@@ -295,7 +668,7 @@ export const useStarryStore = defineStore('starry', () => {
   function removeFriend(id) {
     friends.value = friends.value.filter(f => f.id !== id)
     persistFriends()
-    removeItem(MSG_PREFIX + id)
+    clearChatStorage(id)
 
     let groupsChanged = false
     groups.value.forEach(g => {
@@ -363,7 +736,7 @@ export const useStarryStore = defineStore('starry', () => {
   function removeGroup(id) {
     groups.value = groups.value.filter(g => g.id !== id)
     persistGroups()
-    removeItem(MSG_PREFIX + id)
+    clearChatStorage(id)
     if (activeType.value === 'group' && activeId.value === id) {
       ensureActive()
       persistActive()
@@ -383,9 +756,12 @@ export const useStarryStore = defineStore('starry', () => {
     activeType,
     activeId,
     messages,
+    hasOlder,
+    olderLoading,
     sending,
     typingName,
     generatingChatId,
+    viewActive,
     hasData,
     activeChat,
     activeGroupMembers,
@@ -393,7 +769,14 @@ export const useStarryStore = defineStore('starry', () => {
     init,
     loadChat,
     loadMessages,
+    loadOlderMessages,
     getMessages,
+    getAllMessages,
+    searchMessages,
+    deleteMessage,
+    togglePin,
+    markRead,
+    setViewActive,
     appendMessage,
     clearChat,
     addFriend,

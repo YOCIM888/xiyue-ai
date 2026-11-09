@@ -11,6 +11,8 @@ export const DOC_MAX_CHARS = 8000
 export const DOC_TOTAL_CHARS = 12000
 /** 一次最多选择的文档数 */
 export const DOC_MAX_SELECTION = 3
+/** 本地保存的文档正文上限（预览与再次注入都基于这份正文） */
+export const DOC_STORE_MAX_CHARS = 200000
 
 const MAX_PDF_DOCX_BYTES = 20 * 1024 * 1024
 const MAX_TEXT_BYTES = 5 * 1024 * 1024
@@ -39,6 +41,33 @@ function cleanText(text) {
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
+}
+
+/** 保留 Markdown/TXT 的原始换行与缩进，只清理 BOM 和文件末尾空白 */
+function normalizeEditableText(text) {
+  return String(text || '')
+    .replace(/^\uFEFF/, '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t]+$/, '')
+}
+
+/** 读取文本文件：优先 UTF-8，失败时回退 GB18030，兼容常见中文文档 */
+async function decodeTextFile(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
+    return new TextDecoder('utf-8').decode(bytes.subarray(3))
+  }
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) {
+    return new TextDecoder('utf-16le').decode(bytes.subarray(2))
+  }
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) {
+    try { return new TextDecoder('utf-16be').decode(bytes.subarray(2)) } catch { /* 回退 UTF-8 */ }
+  }
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch {
+    try { return new TextDecoder('gb18030').decode(bytes) } catch { return new TextDecoder().decode(bytes) }
+  }
 }
 
 async function parsePdf(file) {
@@ -122,13 +151,13 @@ export async function parseDocumentFile(file) {
   if (ext === 'pdf') text = await parsePdf(file)
   else if (ext === 'docx') text = await parseDocx(file)
   else {
-    text = cleanText(await file.text())
-    if (!text) throw new DocumentParseError('文件内容为空', 'EMPTY')
+    text = normalizeEditableText(await decodeTextFile(file))
+    if (!text.trim()) throw new DocumentParseError('文件内容为空', 'EMPTY')
   }
 
   const originalLength = text.length
-  const truncated = originalLength > DOC_MAX_CHARS
-  if (truncated) text = text.slice(0, DOC_MAX_CHARS)
+  const truncated = originalLength > DOC_STORE_MAX_CHARS
+  if (truncated) text = text.slice(0, DOC_STORE_MAX_CHARS)
 
   return {
     text,
@@ -137,6 +166,7 @@ export async function parseDocumentFile(file) {
     fileName: file.name,
     fileType: ext,
     fileSize: file.size,
+    contentType: ext === 'md' || ext === 'markdown' ? 'markdown' : 'text',
   }
 }
 

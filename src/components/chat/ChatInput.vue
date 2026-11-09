@@ -31,6 +31,28 @@
       </button>
     </div>
 
+    <!-- 导出格式选择器 -->
+    <div v-if="showExportPicker" class="export-picker">
+      <div class="export-picker-head">
+        <span>导出当前对话</span>
+        <button class="doc-picker-close" title="收起" @click="showExportPicker = false">×</button>
+      </div>
+      <div class="export-options">
+        <button
+          v-for="f in EXPORT_FORMATS"
+          :key="f.id"
+          class="export-option"
+          @click="performExport(f.id)"
+        >
+          <span class="export-icon"><i :class="f.icon"></i></span>
+          <span class="export-text">
+            <span class="export-name">{{ f.label }}</span>
+            <span class="export-desc">{{ f.desc }}</span>
+          </span>
+        </button>
+      </div>
+    </div>
+
     <!-- 输入卡片 -->
     <div class="input-card">
       <!-- 斜杠指令面板 -->
@@ -105,10 +127,13 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
 import { useAssetsStore } from '../../stores/assets'
 import { useChatStore } from '../../stores/chat'
+import { useTopicsStore } from '../../stores/topics'
 import { compressImageDataUrl, OCR_IMAGE_OPTIONS } from '../../utils/image'
 import { estimateMessagesTokens } from '../../utils/contextUsage'
 import ContextRing from '../common/ContextRing.vue'
 import { matchSlashCommands, parseSlashInput, SLASH_COMMANDS } from '../../services/slashCommands'
+import { exportConversation, printConversation } from '../../services/conversationExport'
+import { analyzeTable } from '../../services/sandbox'
 import mammoth from 'mammoth'
 
 const DOC_MAX_SELECTION = 3
@@ -117,6 +142,7 @@ const OCR_MAX_UPLOAD = 6
 const settings = useSettingsStore()
 const assetsStore = useAssetsStore()
 const chat = useChatStore()
+const topics = useTopicsStore()
 const props = defineProps({ isLoading: { type: Boolean, default: false } })
 const emit = defineEmits(['send', 'stop'])
 
@@ -185,6 +211,14 @@ function applySlash(cmd) {
     openDocPicker()
     return
   }
+  // /导出 直接弹出格式菜单
+  if (cmd.id === 'export') {
+    slashOpen.value = false
+    slashIndex.value = 0
+    input.value = ''
+    handleExportCommand('')
+    return
+  }
   // 已有普通文字时作为指令参数保留；已有指令则直接替换
   const existing = input.value.trim()
   const rest = existing.startsWith('/') ? '' : existing
@@ -208,6 +242,74 @@ function onDocumentMousedown(e) {
 
 onMounted(() => document.addEventListener('mousedown', onDocumentMousedown))
 onUnmounted(() => document.removeEventListener('mousedown', onDocumentMousedown))
+
+// ---- /导出：导出当前对话 ----
+const showExportPicker = ref(false)
+const EXPORT_FORMATS = [
+  { id: 'md', label: 'Markdown', desc: '.md 纯文本，便于继续编辑', icon: 'fa-solid fa-file-lines' },
+  { id: 'html', label: '网页', desc: '.html 独立文件，保留排版', icon: 'fa-solid fa-file-code' },
+  { id: 'pdf', label: 'PDF', desc: '调起打印，可另存为 PDF', icon: 'fa-solid fa-file-pdf' },
+  { id: 'doc', label: 'Word', desc: '.doc 文档，可用 Word 打开', icon: 'fa-solid fa-file-word' },
+]
+const EXPORT_FORMAT_ALIASES = {
+  md: 'md', markdown: 'md',
+  html: 'html', htm: 'html', 网页: 'html',
+  pdf: 'pdf', 打印: 'pdf',
+  doc: 'doc', word: 'doc', docx: 'doc', 文档: 'doc',
+}
+
+function exportPayload() {
+  return {
+    title: topics.currentTopic?.title || '对话导出',
+    messages: chat.messages,
+    userName: settings.userName,
+  }
+}
+
+function performExport(format) {
+  showExportPicker.value = false
+  const payload = exportPayload()
+  if (!payload.messages.length) {
+    window.__ui?.showToast('当前对话没有可导出的内容', 'info')
+    return
+  }
+  if (format === 'pdf') {
+    try {
+      if (!printConversation(payload)) {
+        window.__ui?.showToast('导出 PDF 失败，请重试', 'error')
+      }
+    } catch (err) {
+      console.error('[export] PDF 导出失败', err)
+      window.__ui?.showToast('导出 PDF 失败，请检查浏览器打印设置', 'error', 4200)
+    }
+    return
+  }
+  try {
+    if (exportConversation({ format, ...payload })) {
+      window.__ui?.showToast('对话已导出', 'success')
+    } else {
+      window.__ui?.showToast('没有可导出的内容', 'info')
+    }
+  } catch (err) {
+    console.error('[export] 导出失败', err)
+    window.__ui?.showToast(`导出失败：${err?.message || '未知错误'}`, 'error', 4200)
+  }
+}
+
+function openExportPicker() {
+  if (!chat.messages.length) {
+    window.__ui?.showToast('当前对话没有可导出的内容', 'info')
+    return
+  }
+  showDocPicker.value = false
+  showExportPicker.value = true
+}
+
+function handleExportCommand(arg = '') {
+  const format = EXPORT_FORMAT_ALIASES[String(arg).trim().toLowerCase()]
+  if (format) performExport(format)
+  else openExportPicker()
+}
 
 function autoResize() {
   nextTick(() => {
@@ -260,8 +362,9 @@ function isMobileInput() {
   return MOBILE_UA || window.innerWidth <= 768
 }
 
-function send() {
+async function send() {
   if (!canSend.value) return
+  showExportPicker.value = false
   let text = input.value.trim() || ''
   let forceImage = false
   let displayText = ''
@@ -270,9 +373,19 @@ function send() {
   const parsed = parseSlashInput(text)
   if (parsed) {
     displayText = parsed.display
+    if (parsed.command.id === 'calc' && !settings.calcSandboxEnabled) {
+      window.__ui?.showToast('计算沙箱未开启，请到 技能管理 打开「计算沙箱」', 'info', 3600)
+      return
+    }
     if (parsed.command.id === 'document') {
       openDocPicker()
       input.value = ''
+      return
+    }
+    if (parsed.command.id === 'export') {
+      input.value = ''
+      slashOpen.value = false
+      handleExportCommand(parsed.arg)
       return
     }
     if (parsed.forceImage) {
@@ -288,13 +401,24 @@ function send() {
   }
 
   // 文件附件（生图指令不拼接附件正文）
-  if (!forceImage) {
-    const okFiles = attachments.value.filter(a => a.type === 'file' && a.status === 'ok' && a.text)
-    if (okFiles.length) {
-      const texts = okFiles.map(f => `[📎 ${f.name}]\n${f.text.slice(0, 20000)}`).join('\n\n')
-      text = text ? texts + '\n\n' + text : texts
+  const okFiles = forceImage
+    ? []
+    : attachments.value.filter(a => a.type === 'file' && a.status === 'ok' && a.text)
+  let statsText = ''
+  if (!forceImage && settings.calcSandboxEnabled) {
+    const blocks = await buildTableStats(okFiles, parsed)
+    if (blocks.length) {
+      statsText = `【本地表格校验与统计（JS Worker 计算，结果可信）】\n${blocks.join('\n\n')}\n请直接引用以上统计值，不要重新心算；缺失值与异常行以校验结果为准。`
     }
   }
+
+  const textParts = []
+  if (okFiles.length) {
+    textParts.push(okFiles.map(f => `[📎 ${f.name}]\n${f.text.slice(0, 20000)}`).join('\n\n'))
+  }
+  if (statsText) textParts.push(statsText)
+  if (text) textParts.push(text)
+  text = textParts.join('\n\n')
 
   // 文档解析附件：正文由 chat store 在注入阶段读取，这里只传文档 id
   const okDocs = attachments.value.filter(a => a.type === 'doc' && a.status === 'ok')
@@ -303,6 +427,16 @@ function send() {
   // 图片附件
   const okImages = attachments.value.filter(a => a.type === 'image' && a.status === 'ok' && a.dataUrl)
   // 不在文本中拼图片标记
+
+  // 文件正文与本地统计只发给模型；气泡里只展示文件名和用户输入
+  if (!displayText) {
+    const displayParts = []
+    if (okFiles.length) displayParts.push(`[📎 ${okFiles.map(f => f.name).join('、')}]`)
+    if (okDocs.length) displayParts.push(`[📄 ${okDocs.map(d => d.name).join('、')}]`)
+    const typed = input.value.trim()
+    if (typed) displayParts.push(typed)
+    if (displayParts.length) displayText = displayParts.join('\n')
+  }
 
   emit('send', {
     text,
@@ -316,6 +450,29 @@ function send() {
   nextTick(autoResize)
 }
 
+const TABLE_FILE_EXT = new Set(['csv', 'tsv', 'xlsx'])
+
+async function buildTableStats(files, parsed) {
+  const targets = files
+    .filter(file => TABLE_FILE_EXT.has(file.name.split('.').pop()?.toLowerCase()))
+    .map(file => ({ name: file.name, text: file.text }))
+  if (!targets.length && parsed?.command.id === 'table' && parsed.arg) {
+    targets.push({ name: '粘贴的数据', text: parsed.arg })
+  }
+  if (!targets.length) return []
+
+  const blocks = []
+  for (const target of targets) {
+    try {
+      const result = await analyzeTable(target.text)
+      if (result.ok && result.summary) blocks.push(`【${target.name}】\n${result.summary}`)
+    } catch (err) {
+      console.warn('[sandbox] 表格统计失败', err)
+    }
+  }
+  return blocks
+}
+
 function isDocSelected(id) {
   return attachments.value.some(a => a.type === 'doc' && a.assetId === id)
 }
@@ -325,6 +482,7 @@ function openDocPicker() {
     window.__ui?.showToast('文档功能未开启，请到 技能管理 打开「文档解析」', 'info', 3600)
     return
   }
+  showExportPicker.value = false
   showDocPicker.value = true
 }
 
@@ -416,12 +574,16 @@ const TEXT_FILE_EXT = [
   'sh', 'bash', 'bat', 'ps1', 'py', 'java', 'c', 'h', 'cpp', 'hpp', 'cc', 'cs', 'go', 'rs', 'php', 'rb', 'kt', 'swift',
 ]
 
-// 文件选择器允许的类型：图片 + docx + 所有文本类后缀
-const FILE_ACCEPT = ['image/*', '.docx', ...TEXT_FILE_EXT.map(ext => `.${ext}`)].join(',')
+// 文件选择器允许的类型：图片 + docx/xlsx + 所有文本类后缀
+const FILE_ACCEPT = ['image/*', '.docx', '.xlsx', ...TEXT_FILE_EXT.map(ext => `.${ext}`)].join(',')
 
 async function addTextFile(file) {
   const ext = file.name.split('.').pop()?.toLowerCase()
-  if (ext !== 'docx' && !TEXT_FILE_EXT.includes(ext)) {
+  if (ext === 'xls') {
+    window.__ui?.showToast('暂不支持旧版 .xls，请在 Excel 中另存为 .xlsx 或 CSV', 'info', 3600)
+    return
+  }
+  if (ext !== 'docx' && ext !== 'xlsx' && !TEXT_FILE_EXT.includes(ext)) {
     window.__ui?.showToast('暂不支持该文件格式，可先导入「我的文档」再选择', 'info', 3600)
     return
   }
@@ -432,12 +594,16 @@ async function addTextFile(file) {
     if (ext === 'docx') {
       const buf = await file.arrayBuffer()
       text = (await mammoth.extractRawText({ arrayBuffer: buf })).value
+    } else if (ext === 'xlsx') {
+      const { parseXlsxFile } = await import('../../services/spreadsheet')
+      text = await parseXlsxFile(file)
     } else {
       text = await file.text()
     }
     attachments.value[idx] = { type: 'file', name: file.name, status: 'ok', text }
-  } catch {
+  } catch (err) {
     attachments.value[idx] = { type: 'file', name: file.name, status: 'fail', text: '' }
+    window.__ui?.showToast(`${file.name} 解析失败：${err?.message || '文件不可读'}`, 'error', 4200)
   }
 }
 
@@ -503,6 +669,79 @@ defineExpose({ focus: () => textareaRef.value?.focus() })
 .doc-picker-meta { flex-shrink: 0; font-size: 11px; color: var(--text-muted); }
 .doc-picker-picked { flex-shrink: 0; font-size: 11px; color: var(--accent); }
 .doc-picker-list { max-height: 240px; overflow-y: auto; }
+
+/* 导出格式选择器 */
+.export-picker {
+  margin-bottom: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-card);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+}
+.export-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.export-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px;
+}
+.export-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.export-option:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+.export-icon {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  background: var(--accent-light);
+  color: var(--accent);
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.export-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.export-name { font-size: 13px; font-weight: 600; }
+.export-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 640px) {
+  .export-options { grid-template-columns: 1fr; }
+}
 
 /* 输入卡片 */
 .input-card {

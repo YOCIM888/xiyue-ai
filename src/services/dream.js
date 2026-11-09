@@ -176,6 +176,31 @@ function cleanOption(text) {
     .slice(0, 40)
 }
 
+function normalizeState(raw) {
+  const list = value => {
+    if (Array.isArray(value)) return value.map(item => String(item).trim()).filter(Boolean).slice(0, 8)
+    if (typeof value === 'string' && value.trim()) return [value.trim()]
+    return []
+  }
+  return {
+    location: String(raw?.location || raw?.place || '').trim().slice(0, 80),
+    characters: list(raw?.characters || raw?.人物),
+    items: list(raw?.items || raw?.物品),
+    clues: list(raw?.clues || raw?.线索),
+    facts: list(raw?.facts || raw?.事实),
+  }
+}
+
+function formatState(state = {}) {
+  const lines = []
+  if (state.location) lines.push(`时间地点：${state.location}`)
+  if (state.characters?.length) lines.push(`人物关系：${state.characters.join('；')}`)
+  if (state.items?.length) lines.push(`持有物品：${state.items.join('；')}`)
+  if (state.clues?.length) lines.push(`未解线索：${state.clues.join('；')}`)
+  if (state.facts?.length) lines.push(`关键事实：${state.facts.join('；')}`)
+  return lines.join('\n')
+}
+
 const FALLBACK_OPTIONS = ['先冷静观察周围的情况', '立刻找地方藏身', '想办法弄到能用的武器']
 
 /** 模型有时会把选项写进正文，这里做一次兜底抽取 */
@@ -207,7 +232,7 @@ function normalizeOptions(raw) {
  * 根据玩家的选择续写下一幕，并生成新的 3 个选项
  * @returns {Promise<{narrative: string, options: string[]}>}
  */
-export async function generateNextScene({ work, turns = [], choice, settings }) {
+export async function generateNextScene({ work, turns = [], choice, settings, state = {}, summary = '', signal }) {
   const systemPrompt = `你是中文互动叙事作品《${work.title}》的叙事引擎，负责推进剧情并给出行动选项。
 
 【作品设定】
@@ -220,8 +245,9 @@ ${work.setting}
 4. 不替玩家说话或做决定，正文里不出现“你会怎么做”“请选择”之类的话，也不要列出选项字母。
 5. 结尾停在一个必须立即行动的抉择点，并给出 3 个差异明显的行动选项：6-18 字、动词开头、符合当前处境，不要编号、不要 A/B/C 前缀。
 6. 不输出 Markdown、标题、括号注释、表情符号或额外解释。
-7. 严格输出 JSON，不要输出代码块或任何多余文字：
-{"narrative":"本幕正文","options":["选项一","选项二","选项三"]}`
+7. 维护剧情状态和一份不超过 120 字的滚动摘要，确保人物、物品、线索不丢失。
+8. 严格输出 JSON，不要输出代码块或任何多余文字：
+{"narrative":"本幕正文","options":["选项一","选项二","选项三"],"state":{"location":"时间地点","characters":["人物关系"],"items":["持有物品"],"clues":["未解线索"],"facts":["关键事实"]},"summary":"滚动剧情摘要"}`
 
   const recent = turns.slice(-6)
   const offset = Math.max(0, turns.length - recent.length)
@@ -229,9 +255,14 @@ ${work.setting}
     .map((t, i) => `第${offset + i + 1}幕：${String(t.narrative || '').slice(0, 500)}\n玩家选择：${t.fromChoice}`)
     .join('\n\n')
 
+  const stateBlock = [
+    summary ? `【此前剧情摘要】\n${summary}` : '',
+    formatState(state) ? `【当前状态】\n${formatState(state)}` : '',
+  ].filter(Boolean).join('\n\n')
+
   const userContent = turns.length
-    ? `【前情（最近的幕）】\n${history}\n\n【玩家此刻的选择】\n${choice}\n\n请续写下一幕，并给出 3 个新的行动选项。`
-    : `【开场剧情】\n${work.opening}\n\n【玩家此刻的选择】\n${choice}\n\n请续写下一幕，并给出 3 个新的行动选项。`
+    ? `${stateBlock ? `${stateBlock}\n\n` : ''}【前情（最近的幕）】\n${history}\n\n【玩家此刻的选择】\n${choice}\n\n请续写下一幕，给出 3 个新的行动选项，并更新剧情状态与摘要。`
+    : `${stateBlock ? `${stateBlock}\n\n` : ''}【开场剧情】\n${work.opening}\n\n【玩家此刻的选择】\n${choice}\n\n请续写下一幕，给出 3 个新的行动选项，并建立剧情状态与摘要。`
 
   let output = ''
   await sendChatRequest({
@@ -239,13 +270,14 @@ ${work.setting}
     apiKey: settings.apiKey,
     model: settings.model,
     temperature: Math.min(Math.max(settings.temperature ?? 0.8, 0.6), 1.0),
-    maxTokens: 1000,
+    maxTokens: 1400,
     topP: 0.95,
     thinkingEnabled: false,
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userContent },
     ],
+    signal,
     onChunk: (chunk) => {
       if (chunk.type === 'content' && chunk.text) output += chunk.text
     },
@@ -265,8 +297,15 @@ ${work.setting}
 
   if (!narrative) throw new Error('生成内容为空，请重试')
 
+  const nextState = data?.state && typeof data.state === 'object'
+    ? normalizeState({ ...state, ...data.state })
+    : normalizeState(state)
+  const nextSummary = String(data?.summary || data?.摘要 || '').trim().slice(0, 300) || summary
+
   return {
     narrative,
     options: normalizeOptions(rawOptions),
+    state: nextState,
+    summary: nextSummary,
   }
 }

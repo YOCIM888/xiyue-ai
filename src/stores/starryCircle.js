@@ -37,6 +37,27 @@ export const useStarryCircleStore = defineStore('starryCircle', () => {
     persist()
   }
 
+  function addUserPost({ authorName, category, content, tags = [], likes = 0 }) {
+    const text = String(content || '').trim()
+    if (!text) return null
+    const post = {
+      id: `post-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      authorId: 'me',
+      authorName: authorName || '我',
+      category: category || '日常',
+      content: text.slice(0, 1500),
+      tags: Array.isArray(tags) ? tags.slice(0, 4) : [],
+      comments: [],
+      likes: Math.max(0, Math.floor(Number(likes) || 0)),
+      liked: false,
+      isUser: true,
+      ts: Date.now(),
+    }
+    posts.value = [post, ...posts.value].slice(0, MAX_POSTS)
+    persist()
+    return post
+  }
+
   function removePost(id) {
     posts.value = posts.value.filter(p => p.id !== id)
     persist()
@@ -81,6 +102,7 @@ export const useStarryCircleStore = defineStore('starryCircle', () => {
     replyingPostId,
     init,
     addPosts,
+    addUserPost,
     removePost,
     clear,
     toggleLike,

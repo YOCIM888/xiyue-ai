@@ -61,7 +61,13 @@ function labelOf(key) {
   if (key === 'xiyue_starry_groups') return '群聊列表'
   if (key === 'xiyue_starry_active') return '上次打开窗口'
   if (key === 'xiyue_starry_default_avatars') return '头像初始化标记'
-  if (key.startsWith('xiyue_starry_msgs_')) return `聊天记录 · ${key.slice('xiyue_starry_msgs_'.length)}`
+  if (key.startsWith('xiyue_starry_msgs_')) {
+    const rest = key.slice('xiyue_starry_msgs_'.length)
+    if (rest.endsWith('__meta')) return `聊天记录索引 · ${rest.slice(0, -'__meta'.length)}`
+    const archiveIndex = rest.indexOf('__archive_')
+    if (archiveIndex >= 0) return `聊天记录归档 · ${rest.slice(0, archiveIndex)}`
+    return `聊天记录 · ${rest}`
+  }
   if (key === 'xiyue_starry_circle_posts') return '圈子帖子'
   if (key === 'xiyue_dream_sessions') return '推演进度'
   if (key === 'xiyue_assets') return '文档列表'

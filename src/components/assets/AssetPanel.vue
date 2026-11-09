@@ -4,12 +4,12 @@
       <div class="asset-panel" :class="{ open: visible }">
         <div class="asset-header">
           <h2>
-            {{ editing ? '编辑文档' : '我的文档' }}
+            {{ editing ? '文档详情' : '我的文档' }}
             <span v-if="!editing && store.sorted.length" class="count">{{ store.sorted.length }}</span>
           </h2>
           <div class="header-actions">
             <template v-if="!editing">
-              <button class="icon-btn" :class="{ active: importing }" :disabled="importing" title="导入文件（PDF / DOCX / TXT / Markdown）" @click="triggerImport">
+              <button class="icon-btn" :class="{ active: importing }" :disabled="importing" title="导入文件（PDF / DOCX / TXT / Markdown，可多选）" @click="triggerImport">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
               </button>
               <button class="icon-btn" title="新建文档" @click="createNew">
@@ -27,15 +27,30 @@
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             </button>
           </div>
-          <input ref="importInput" type="file" accept=".pdf,.docx,.txt,.md,.markdown,.doc" style="display:none" @change="handleImportFile" />
+          <input ref="importInput" type="file" accept=".pdf,.docx,.txt,.md,.markdown" multiple style="display:none" @change="handleImportFile" />
         </div>
 
-        <div v-if="editing" class="asset-editor">
+        <div v-if="editing" class="asset-editor" @keydown="onEditorKeydown">
           <input v-model="editing.title" class="ae-title" placeholder="标题" />
-          <textarea v-model="editing.content" class="ae-content" placeholder="内容…"></textarea>
+          <div class="ae-toolbar">
+            <div class="ae-tabs">
+              <button class="ae-tab" :class="{ active: previewMode }" @click="previewMode = true">预览</button>
+              <button class="ae-tab" :class="{ active: !previewMode }" @click="previewMode = false">编辑</button>
+            </div>
+            <span class="ae-meta">
+              {{ (editing.content || '').length.toLocaleString() }} 字
+              <template v-if="editing.fileType"> · {{ editing.fileType.toUpperCase() }}</template>
+            </span>
+          </div>
+          <div v-if="previewMode" class="ae-preview">
+            <MarkdownRenderer v-if="editingIsMarkdown" :content="editing.content" sanitize />
+            <pre v-else class="ae-plain">{{ editing.content }}</pre>
+          </div>
+          <textarea v-else v-model="editing.content" class="ae-content" placeholder="内容…"></textarea>
           <div class="ae-actions">
             <button class="btn-sm primary" @click="saveAsset">保存</button>
             <button class="btn-sm" @click="cancelEdit">取消</button>
+            <span v-if="dirty" class="ae-dirty">未保存</span>
           </div>
         </div>
 
@@ -48,7 +63,7 @@
           <div v-if="store.sorted.length === 0" class="empty">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
             <p>暂无文档</p>
-            <span>点击右上角 + 新建文档</span>
+            <span>点击右上角 + 新建，或导入文件</span>
           </div>
 
           <div
@@ -78,21 +93,41 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useAssetsStore } from '../../stores/assets'
+import MarkdownRenderer from '../common/MarkdownRenderer.vue'
 
 const store = useAssetsStore()
 const visible = ref(false)
 const editing = ref(null)
+const previewMode = ref(false)
+const baseline = ref('')
 const selectMode = ref(false)
 const selected = ref([])
 const importInput = ref(null)
 const importing = ref(false)
 
 const allSelected = computed(() => store.sorted.length > 0 && selected.value.length === store.sorted.length)
+const editingIsMarkdown = computed(() => {
+  const a = editing.value
+  if (!a) return false
+  if (a.contentType) return a.contentType === 'markdown'
+  return !a.fileType || a.fileType === 'md' || a.fileType === 'markdown'
+})
+const editingSnapshot = computed(() =>
+  editing.value ? JSON.stringify({ title: editing.value.title, content: editing.value.content }) : ''
+)
+const dirty = computed(() => !!editing.value && editingSnapshot.value !== baseline.value)
 
 function open() { visible.value = true }
-function close() {
+
+async function close() {
+  if (editing.value && dirty.value) {
+    const ok = await window.__ui?.showConfirm('有未保存的修改，确定关闭吗？')
+    if (!ok) return
+  }
   visible.value = false
   editing.value = null
+  previewMode.value = false
+  baseline.value = ''
   selectMode.value = false
   selected.value = []
 }
@@ -103,48 +138,90 @@ function fmtTime(ts) {
   return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
+function startEditing(asset, preview = true) {
+  editing.value = { ...asset }
+  baseline.value = JSON.stringify({ title: asset.title || '', content: asset.content || '' })
+  previewMode.value = preview
+}
+
 function createNew() {
   selectMode.value = false
   selected.value = []
-  editing.value = { id: null, title: '', content: '' }
+  startEditing({ id: null, title: '', content: '', contentType: 'markdown', source: 'manual' }, false)
 }
 
 function triggerImport() {
   if (!importing.value) importInput.value?.click()
 }
 
+function uniqueTitle(base) {
+  const used = new Set(store.assets.map(a => a.title))
+  if (!used.has(base)) return base
+  let i = 2
+  while (used.has(`${base} (${i})`)) i += 1
+  return `${base} (${i})`
+}
+
 async function handleImportFile(e) {
-  const file = e.target.files?.[0]
+  const files = Array.from(e.target.files || [])
   e.target.value = ''
-  if (!file) return
+  if (!files.length) return
 
   importing.value = true
-  window.__ui?.showToast(`正在解析「${file.name}」…`, 'info', 2000)
+  let imported = 0
+  let skipped = 0
+  const errors = []
+  const existing = new Set(
+    store.assets.filter(a => a.fileName).map(a => `${a.fileName}|${a.fileSize ?? ''}`)
+  )
+
   try {
     const { parseDocumentFile } = await import('../../services/documentParser')
-    const result = await parseDocumentFile(file)
-    const title = result.fileName.replace(/\.[^.]+$/, '') || result.fileName
-    store.create(title, result.text, {
-      fileName: result.fileName,
-      fileType: result.fileType,
-      fileSize: result.fileSize,
-      truncated: result.truncated,
-      originalLength: result.originalLength,
-    })
-    if (result.truncated) {
-      window.__ui?.showToast(`已导入「${title}」：正文共 ${result.originalLength} 字，已截断保留前 ${result.text.length} 字`, 'info', 4500)
-    } else {
-      window.__ui?.showToast(`已导入「${title}」`, 'success')
+    for (const [index, file] of files.entries()) {
+      const key = `${file.name}|${file.size}`
+      if (existing.has(key)) {
+        skipped += 1
+        continue
+      }
+      window.__ui?.showToast(`正在解析 ${index + 1}/${files.length}：${file.name}`, 'info', 1800)
+      try {
+        const result = await parseDocumentFile(file)
+        const baseTitle = result.fileName.replace(/\.[^.]+$/, '') || result.fileName
+        store.create(uniqueTitle(baseTitle), result.text, {
+          fileName: result.fileName,
+          fileType: result.fileType,
+          fileSize: result.fileSize,
+          truncated: result.truncated,
+          originalLength: result.originalLength,
+          contentType: result.contentType,
+          source: 'import',
+        })
+        existing.add(key)
+        imported += 1
+      } catch (err) {
+        errors.push(`${file.name}：${err?.message || '解析失败'}`)
+      }
     }
-  } catch (err) {
-    window.__ui?.showToast(err?.message || '文档解析失败', 'error', 4500)
   } finally {
     importing.value = false
+  }
+
+  if (imported) {
+    window.__ui?.showToast(
+      `已导入 ${imported} 个文档${skipped ? `，跳过 ${skipped} 个重复文件` : ''}`,
+      'success',
+      4200
+    )
+  } else if (!errors.length) {
+    window.__ui?.showToast(skipped ? '所选文件均已存在，已跳过' : '没有可导入的文件', 'info', 3600)
+  }
+  if (errors.length) {
+    window.__ui?.showToast(`有 ${errors.length} 个文件导入失败：${errors[0]}`, 'error', 5200)
   }
 }
 
 function openAsset(a) {
-  editing.value = { ...a }
+  startEditing(a, true)
 }
 
 function saveAsset() {
@@ -153,13 +230,32 @@ function saveAsset() {
   if (editing.value.id) {
     store.update(editing.value.id, { title, content: editing.value.content })
   } else {
-    store.create(title, editing.value.content)
+    store.create(title, editing.value.content, {
+      contentType: editing.value.contentType || 'markdown',
+      source: 'manual',
+    })
   }
   editing.value = null
+  previewMode.value = false
+  baseline.value = ''
+  window.__ui?.showToast('文档已保存', 'success')
 }
 
-function cancelEdit() {
+async function cancelEdit() {
+  if (editing.value && dirty.value) {
+    const ok = await window.__ui?.showConfirm('放弃未保存的修改？')
+    if (!ok) return
+  }
   editing.value = null
+  previewMode.value = false
+  baseline.value = ''
+}
+
+function onEditorKeydown(e) {
+  if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === 's') {
+    e.preventDefault()
+    saveAsset()
+  }
 }
 
 function isSelected(id) {
@@ -251,9 +347,21 @@ async function deleteSelected() {
 .asset-editor { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 16px 24px 20px; }
 .ae-title { width: 100%; padding: 9px 12px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-input); color: var(--text-primary); font-size: 15px; font-weight: 500; outline: none; margin-bottom: 10px; box-sizing: border-box; font-family: inherit; }
 .ae-title:focus { border-color: var(--accent); }
+.ae-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.ae-tabs { display: inline-flex; padding: 2px; border-radius: 8px; background: var(--bg-hover); }
+.ae-tab { padding: 5px 14px; border: none; border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: 12px; font-family: inherit; cursor: pointer; transition: background 0.15s, color 0.15s; }
+.ae-tab:hover { color: var(--text-primary); }
+.ae-tab.active { background: var(--bg-card); color: var(--text-primary); font-weight: 600; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08); }
+.ae-meta { font-size: 11px; color: var(--text-muted); }
+.ae-preview { flex: 1; min-height: 120px; overflow-y: auto; padding: 14px 16px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-input); }
+.ae-preview :deep(.markdown-body) { font-size: 13px; line-height: 1.7; }
+.ae-preview :deep(.markdown-body h1) { font-size: 1.3em; }
+.ae-preview :deep(.markdown-body h2) { font-size: 1.18em; }
+.ae-plain { margin: 0; white-space: pre-wrap; word-break: break-word; font-family: inherit; font-size: 13px; line-height: 1.7; color: var(--text-primary); }
 .ae-content { width: 100%; flex: 1; min-height: 120px; padding: 12px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-input); color: var(--text-primary); font-size: 13px; outline: none; resize: none; font-family: 'SF Mono', 'Fira Code', monospace; line-height: 1.7; box-sizing: border-box; }
 .ae-content:focus { border-color: var(--accent); }
-.ae-actions { display: flex; gap: 8px; margin-top: 12px; }
+.ae-actions { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.ae-dirty { margin-left: auto; font-size: 11px; color: var(--text-muted); }
 
 .btn-sm { padding: 7px 16px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-card); color: var(--text-primary); font-size: 12px; cursor: pointer; font-family: inherit; }
 .btn-sm:hover { background: var(--bg-hover); }
