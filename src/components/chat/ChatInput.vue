@@ -120,7 +120,7 @@ const showDocPicker = ref(false)
 const availableDocs = computed(() => assetsStore.sorted.filter(a => (a.content || '').trim()))
 
 const canSend = computed(() => (input.value.trim() || attachments.value.some(a => a.status === 'ok')) && !props.isLoading)
-const isMobile = /Android|iPhone|iPad|iPod|webOS/i.test(navigator.userAgent) || window.innerWidth <= 768
+const MOBILE_UA = /Android|iPhone|iPad|iPod|webOS/i.test(navigator.userAgent)
 const isLoading = computed(() => props.isLoading)
 const placeholder = computed(() => {
   if (isLoading.value) return 'AI 正在回复中…'
@@ -137,15 +137,20 @@ function autoResize() {
 }
 
 function handleKeydown(e) {
-  if (e.key === 'Enter') {
-    // 手机端：Enter = 换行（不发送）
-    if (isMobile) return
-    // 桌面端：Enter 发送，Shift+Enter 换行
-    if (!e.shiftKey) {
-      e.preventDefault()
-      send()
-    }
+  if (e.key !== 'Enter') return
+  // 中文输入法候选确认时的 Enter 不当作发送
+  if (e.isComposing || e.keyCode === 229) return
+  // 手机端：Enter 只换行
+  if (isMobileInput()) return
+  // 桌面端：Enter 发送，Shift+Enter 换行
+  if (!e.shiftKey) {
+    e.preventDefault()
+    send()
   }
+}
+
+function isMobileInput() {
+  return MOBILE_UA || window.innerWidth <= 768
 }
 
 function send() {

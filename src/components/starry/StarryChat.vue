@@ -211,7 +211,7 @@ const typingAvatar = computed(() =>
   store.friends.find(f => f.name === store.typingName)?.avatar || ''
 )
 
-const isMobile = /Android|iPhone|iPad|iPod|webOS/i.test(navigator.userAgent) || window.innerWidth <= 768
+const MOBILE_UA = /Android|iPhone|iPad|iPod|webOS/i.test(navigator.userAgent)
 
 function senderAvatar(m) {
   if (m.role !== 'character') return ''
@@ -272,7 +272,11 @@ function autoResize() {
 
 function onKeydown(e) {
   if (e.key !== 'Enter') return
-  if (isMobile) return
+  // 中文输入法候选确认时的 Enter 不当作发送
+  if (e.isComposing || e.keyCode === 229) return
+  // 手机端：Enter 只换行
+  if (MOBILE_UA || window.innerWidth <= 768) return
+  // 桌面端：Enter 发送，Shift+Enter 换行
   if (!e.shiftKey) {
     e.preventDefault()
     send()
