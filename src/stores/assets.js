@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { getItem, setItem } from '../utils/kv'
 
 const KEY = 'xiyue_assets'
 let nextId = Date.now()
@@ -8,9 +9,9 @@ export const useAssetsStore = defineStore('assets', () => {
   const assets = ref(load())
 
   function load() {
-    try { return JSON.parse(localStorage.getItem(KEY)) || [] } catch { return [] }
+    try { return JSON.parse(getItem(KEY)) || [] } catch { return [] }
   }
-  function save() { localStorage.setItem(KEY, JSON.stringify(assets.value)) }
+  function save() { setItem(KEY, JSON.stringify(assets.value)) }
 
   const sorted = computed(() =>
     [...assets.value].sort((a, b) => b.updatedAt - a.updatedAt)

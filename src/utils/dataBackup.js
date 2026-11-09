@@ -1,6 +1,28 @@
-// 应用数据统计与备份（localStorage 全部来源于本应用）
+// 应用数据统计与备份（数据统一存储在 IndexedDB，localStorage 仅存小配置）
+import {
+  AUTO_BACKUP_KEEP,
+  AUTO_BACKUP_PREFIX,
+  MIGRATED_KEY,
+  clearAppData,
+  flushStorage,
+  getItem,
+  rawEntries,
+  removeItem,
+  setItem,
+} from './kv'
+
 export const BACKUP_APP = 'XIYUE AI'
 export const BACKUP_VERSION = 1
+
+const AUTO_LAST_KEY = 'xiyue_backup_last_run'
+const QUOTA_WARN_KEY = 'xiyue_quota_warned_at'
+const AUTO_MAX_BYTES = 60 * 1024 * 1024
+
+function localDateKey() {
+  const d = new Date()
+  const pad = n => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
 
 const MODULES = [
   { key: 'chat', label: '主聊天会话', icon: 'fa-solid fa-comments', color: '#6366f1' },
@@ -43,7 +65,12 @@ function labelOf(key) {
   if (key === 'xiyue_starry_circle_posts') return '圈子帖子'
   if (key === 'xiyue_dream_sessions') return '推演进度'
   if (key === 'xiyue_assets') return '文档列表'
+  if (key.startsWith(AUTO_BACKUP_PREFIX)) return `自动备份 ${key.slice(AUTO_BACKUP_PREFIX.length)}`
   return key
+}
+
+function isInternalKey(key) {
+  return key === MIGRATED_KEY || key === QUOTA_WARN_KEY || key === AUTO_LAST_KEY
 }
 
 function byteSize(str) {
@@ -61,10 +88,8 @@ export function computeStorageUsage() {
   let totalBytes = 0
   let keyCount = 0
 
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i)
-    if (!key) continue
-    const raw = localStorage.getItem(key) ?? ''
+  for (const [key, raw] of rawEntries()) {
+    if (!key || isInternalKey(key)) continue
     const bytes = byteSize(raw)
     const bucket = buckets.get(moduleOf(key))
     bucket.bytes += bytes
@@ -117,19 +142,19 @@ function maskSettings(raw) {
   return { raw, fields: [] }
 }
 
-export function buildBackupPayload() {
+export function buildBackupPayload({ includeAutoBackups = false } = {}) {
   const data = {}
   const masked = []
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i)
-    if (!key) continue
-    let raw = localStorage.getItem(key) ?? ''
+  for (const [key, raw] of rawEntries()) {
+    if (!key || isInternalKey(key)) continue
+    if (!includeAutoBackups && key.startsWith(AUTO_BACKUP_PREFIX)) continue
+    let value = raw
     if (key === SETTINGS_KEY) {
-      const result = maskSettings(raw)
+      const result = maskSettings(value)
       if (result.fields.length) masked.push(...result.fields)
-      raw = result.raw
+      value = result.raw
     }
-    data[key] = raw
+    data[key] = value
   }
   return {
     app: BACKUP_APP,
@@ -237,13 +262,17 @@ export function parseBackup(text) {
   }
 }
 
-export function applyBackup(entries) {
+export async function applyBackup(entries) {
+  // 空备份不允许执行：避免误清空现有数据
+  if (!entries || typeof entries !== 'object' || Object.keys(entries).length === 0) {
+    throw new Error('备份内容为空，已取消导入')
+  }
   // 导入前保留本机密钥，避免备份中的脱敏空值覆盖真实 Key
   let currentApiKey = ''
   let currentSecondaryKey = ''
   let currentTavilyKey = ''
   try {
-    const current = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')
+    const current = JSON.parse(getItem(SETTINGS_KEY) || '{}')
     currentApiKey = current.apiKey || ''
     currentSecondaryKey = current.secondaryApiKey || ''
     currentTavilyKey = current.tavilyApiKey || ''
@@ -253,27 +282,75 @@ export function applyBackup(entries) {
     currentTavilyKey = ''
   }
 
-  // 清除全部应用数据（本域名下 localStorage 仅由本应用使用）
-  const existingKeys = []
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i)
-    if (key) existingKeys.push(key)
-  }
-  existingKeys.forEach(key => localStorage.removeItem(key))
+  // 清除全部应用数据（保留自动备份与迁移标记）
+  await clearAppData()
 
   for (const [key, raw] of Object.entries(entries)) {
+    if (!key) continue
     if (key === SETTINGS_KEY) {
       const obj = parseRaw(raw, null)
       if (obj && typeof obj === 'object') {
         if (!obj.apiKey && currentApiKey) obj.apiKey = currentApiKey
         if (!obj.secondaryApiKey && currentSecondaryKey) obj.secondaryApiKey = currentSecondaryKey
         if (!obj.tavilyApiKey && currentTavilyKey) obj.tavilyApiKey = currentTavilyKey
-        localStorage.setItem(key, JSON.stringify(obj))
+        setItem(key, JSON.stringify(obj))
         continue
       }
     }
-    localStorage.setItem(key, raw)
+    setItem(key, raw)
   }
+  await flushStorage()
+  try {
+    localStorage.setItem(AUTO_LAST_KEY, localDateKey())
+  } catch { /* ignore */ }
 
   return Object.keys(entries).length
+}
+
+// ---- 自动备份：每天首次启动生成一份快照，最多保留 3 份 ----
+
+export function listAutoBackups() {
+  return rawEntries()
+    .filter(([key]) => key.startsWith(AUTO_BACKUP_PREFIX))
+    .map(([key, raw]) => ({
+      key,
+      date: key.slice(AUTO_BACKUP_PREFIX.length),
+      bytes: byteSize(raw),
+    }))
+    .sort((a, b) => b.date.localeCompare(a.date))
+}
+
+function pruneAutoBackups() {
+  for (const item of listAutoBackups().slice(AUTO_BACKUP_KEEP)) {
+    removeItem(item.key)
+  }
+}
+
+export async function maybeAutoBackup() {
+  const today = localDateKey()
+  let last = ''
+  try { last = localStorage.getItem(AUTO_LAST_KEY) || '' } catch { last = '' }
+  if (last === today) return null
+
+  const payload = buildBackupPayload()
+  const text = JSON.stringify(payload)
+  try { localStorage.setItem(AUTO_LAST_KEY, today) } catch { /* ignore */ }
+
+  if (byteSize(text) > AUTO_MAX_BYTES) {
+    window.__ui?.showToast?.('数据量较大，已跳过本次自动备份，建议到数据设置手动导出', 'info', 5000)
+    return null
+  }
+
+  const key = `${AUTO_BACKUP_PREFIX}${today}`
+  setItem(key, text)
+  await flushStorage()
+  pruneAutoBackups()
+  return key
+}
+
+export async function restoreAutoBackup(key) {
+  const raw = getItem(key)
+  if (!raw) throw new Error('自动备份不存在')
+  const parsed = parseBackup(raw)
+  return applyBackup(parsed.entries)
 }

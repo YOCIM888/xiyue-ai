@@ -1,6 +1,7 @@
 // 圈子话题种子与本地查重工具
 import { conversationKey } from './conversation'
 import { loadTopics } from './storage'
+import { getItem } from './kv'
 
 const STOPWORDS = new Set([
   '我们', '你们', '他们', '她们', '这个', '那个', '这些', '那些', '这里', '那里',
@@ -104,7 +105,7 @@ export function collectRecentChatSeeds({
   for (const topic of recentTopics) {
     let conv = null
     try {
-      const raw = localStorage.getItem(conversationKey(topic.id))
+      const raw = getItem(conversationKey(topic.id))
       if (!raw) continue // 没有 v2 数据就跳过，不回读旧键
       conv = JSON.parse(raw)
     } catch {

@@ -1,12 +1,13 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { getItem, removeItem, setItem } from '../utils/kv'
 
 const POSTS_KEY = 'xiyue_starry_circle_posts'
 const MAX_POSTS = 60
 
 function loadJSON(key, fallback) {
   try {
-    const raw = localStorage.getItem(key)
+    const raw = getItem(key)
     return raw ? JSON.parse(raw) : fallback
   } catch {
     return fallback
@@ -24,7 +25,7 @@ export const useStarryCircleStore = defineStore('starryCircle', () => {
 
   function persist() {
     try {
-      localStorage.setItem(POSTS_KEY, JSON.stringify(posts.value.slice(0, MAX_POSTS)))
+      setItem(POSTS_KEY, JSON.stringify(posts.value.slice(0, MAX_POSTS)))
     } catch {
       // 存储空间不足时忽略，页面内数据仍然可用
     }
@@ -44,7 +45,7 @@ export const useStarryCircleStore = defineStore('starryCircle', () => {
   function clear() {
     posts.value = []
     try {
-      localStorage.removeItem(POSTS_KEY)
+      removeItem(POSTS_KEY)
     } catch {
       // ignore
     }

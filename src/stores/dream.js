@@ -1,11 +1,12 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
+import { getItem, setItem } from '../utils/kv'
 
 const SESSIONS_KEY = 'xiyue_dream_sessions'
 
 function loadJSON(key, fallback) {
   try {
-    const raw = localStorage.getItem(key)
+    const raw = getItem(key)
     return raw ? JSON.parse(raw) : fallback
   } catch {
     return fallback
@@ -14,7 +15,7 @@ function loadJSON(key, fallback) {
 
 function saveJSON(key, value) {
   try {
-    localStorage.setItem(key, JSON.stringify(value))
+    setItem(key, JSON.stringify(value))
   } catch {
     // 存储空间不足时忽略，本次会话仍可继续
   }

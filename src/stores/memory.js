@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
+import { getItem, setItem } from '../utils/kv'
 
 const KEY = 'xiyue_memories'
 const ENABLED_KEY = 'xiyue_memory_enabled'
@@ -15,7 +16,7 @@ export const DEFAULT_MEMORY_ACCESS = {
 
 function loadMemories() {
   try {
-    const raw = localStorage.getItem(KEY)
+    const raw = getItem(KEY)
     const data = raw ? JSON.parse(raw) : []
     return Array.isArray(data) ? data : []
   } catch {
@@ -24,14 +25,14 @@ function loadMemories() {
 }
 
 function loadEnabled() {
-  const raw = localStorage.getItem(ENABLED_KEY)
+  const raw = getItem(ENABLED_KEY)
   return raw === null ? true : raw === '1'
 }
 
 function loadAccess() {
   const merged = { ...DEFAULT_MEMORY_ACCESS }
   try {
-    const raw = localStorage.getItem(ACCESS_KEY)
+    const raw = getItem(ACCESS_KEY)
     if (!raw) return merged
     const data = JSON.parse(raw)
     if (!data || typeof data !== 'object') return merged
@@ -53,17 +54,17 @@ export const useMemoryStore = defineStore('memory', () => {
 
   function persist() {
     try {
-      localStorage.setItem(KEY, JSON.stringify(memories.value))
+      setItem(KEY, JSON.stringify(memories.value))
     } catch { /* 存储超限时静默失败 */ }
   }
 
   function persistEnabled() {
-    localStorage.setItem(ENABLED_KEY, enabled.value ? '1' : '0')
+    setItem(ENABLED_KEY, enabled.value ? '1' : '0')
   }
 
   function persistAccess() {
     try {
-      localStorage.setItem(ACCESS_KEY, JSON.stringify(access.value))
+      setItem(ACCESS_KEY, JSON.stringify(access.value))
     } catch { /* 存储超限时静默失败 */ }
   }
 

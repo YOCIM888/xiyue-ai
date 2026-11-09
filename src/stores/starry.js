@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { getItem, removeItem, setItem } from '../utils/kv'
 
 const FRIENDS_KEY = 'xiyue_starry_friends'
 const GROUPS_KEY = 'xiyue_starry_groups'
@@ -39,7 +40,7 @@ export const DEFAULT_GROUP = {
 
 function loadJSON(key, fallback) {
   try {
-    const raw = localStorage.getItem(key)
+    const raw = getItem(key)
     if (raw === null) return fallback
     const data = JSON.parse(raw)
     return data ?? fallback
@@ -57,7 +58,7 @@ function readMessages(chatId) {
 function writeMessages(chatId, list) {
   if (!chatId) return
   try {
-    localStorage.setItem(MSG_PREFIX + chatId, JSON.stringify(list))
+    setItem(MSG_PREFIX + chatId, JSON.stringify(list))
   } catch {
     /* 存储空间不足时忽略 */
   }
@@ -88,13 +89,13 @@ export const useStarryStore = defineStore('starry', () => {
   let initialized = false
 
   function persistFriends() {
-    localStorage.setItem(FRIENDS_KEY, JSON.stringify(friends.value))
+    setItem(FRIENDS_KEY, JSON.stringify(friends.value))
   }
   function persistGroups() {
-    localStorage.setItem(GROUPS_KEY, JSON.stringify(groups.value))
+    setItem(GROUPS_KEY, JSON.stringify(groups.value))
   }
   function persistActive() {
-    localStorage.setItem(ACTIVE_KEY, JSON.stringify({ type: activeType.value, id: activeId.value }))
+    setItem(ACTIVE_KEY, JSON.stringify({ type: activeType.value, id: activeId.value }))
   }
 
   const hasData = computed(() => friends.value.length > 0 || groups.value.length > 0)
@@ -151,7 +152,7 @@ export const useStarryStore = defineStore('starry', () => {
   }
 
   function applyDefaultAvatars() {
-    if (localStorage.getItem(AVATAR_MIGRATION_KEY) === '1') return
+    if (getItem(AVATAR_MIGRATION_KEY) === '1') return
     let changed = false
     friends.value.forEach(f => {
       const def = DEFAULT_FRIENDS.find(d => d.id === f.id)
@@ -161,7 +162,7 @@ export const useStarryStore = defineStore('starry', () => {
       }
     })
     if (changed) persistFriends()
-    localStorage.setItem(AVATAR_MIGRATION_KEY, '1')
+    setItem(AVATAR_MIGRATION_KEY, '1')
   }
 
   function loadMessages(chatId = activeId.value) {
@@ -173,7 +174,7 @@ export const useStarryStore = defineStore('starry', () => {
     initialized = true
 
     // 仅在从未初始化过（键不存在）时播种默认数据；删空后刷新不会复活
-    if (localStorage.getItem(FRIENDS_KEY) === null) {
+    if (getItem(FRIENDS_KEY) === null) {
       seedDefaults()
     } else {
       friends.value = loadJSON(FRIENDS_KEY, [])
@@ -241,7 +242,7 @@ export const useStarryStore = defineStore('starry', () => {
   }
 
   function clearChat(type, id) {
-    localStorage.removeItem(MSG_PREFIX + id)
+    removeItem(MSG_PREFIX + id)
     if (id === activeId.value) messages.value = []
     if (type === 'friend') {
       const f = friends.value.find(x => x.id === id)
@@ -294,7 +295,7 @@ export const useStarryStore = defineStore('starry', () => {
   function removeFriend(id) {
     friends.value = friends.value.filter(f => f.id !== id)
     persistFriends()
-    localStorage.removeItem(MSG_PREFIX + id)
+    removeItem(MSG_PREFIX + id)
 
     let groupsChanged = false
     groups.value.forEach(g => {
@@ -362,7 +363,7 @@ export const useStarryStore = defineStore('starry', () => {
   function removeGroup(id) {
     groups.value = groups.value.filter(g => g.id !== id)
     persistGroups()
-    localStorage.removeItem(MSG_PREFIX + id)
+    removeItem(MSG_PREFIX + id)
     if (activeType.value === 'group' && activeId.value === id) {
       ensureActive()
       persistActive()

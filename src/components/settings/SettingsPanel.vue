@@ -376,6 +376,22 @@
                   :title="`${m.label} ${formatBytes(m.bytes)}`"
                 ></span>
               </div>
+              <div class="engine-row">
+                <span class="engine-name">
+                  <i class="fa-solid fa-database"></i>
+                  {{ quota.engine === 'idb' ? 'IndexedDB 主存储' : 'localStorage 降级模式' }}
+                </span>
+                <span class="engine-size">
+                  {{ formatBytes(quota.usage) }}<template v-if="quota.quota"> / {{ formatBytes(quota.quota) }}</template>
+                  <template v-if="quota.percent"> · {{ Math.round(quota.percent) }}%</template>
+                </span>
+              </div>
+              <div v-if="quota.percent" class="engine-bar">
+                <span :class="{ warn: quota.percent >= 85 }" :style="{ width: Math.min(100, quota.percent) + '%' }"></span>
+              </div>
+              <p class="hint engine-hint">
+                会话、文档、图片等大数据存放在 IndexedDB，localStorage 只保留设置等小配置；接近配额时会自动提醒。
+              </p>
             </div>
 
             <div class="module-list">
@@ -420,6 +436,20 @@
 
             <div class="divider"></div>
 
+            <h3 class="sub-title"><i class="fa-solid fa-clock-rotate-left"></i> 自动备份</h3>
+            <div class="backup-list">
+              <div v-for="b in autoBackups" :key="b.key" class="backup-row">
+                <span class="backup-date">{{ b.date }}</span>
+                <span class="backup-size">{{ formatBytes(b.bytes) }}</span>
+                <button class="btn-link" @click="restoreBackup(b)">恢复</button>
+              </div>
+              <p v-if="!autoBackups.length" class="hint">
+                暂无自动备份。每天首次打开应用会自动生成一份快照，最多保留 3 份，可在数据异常时一键恢复。
+              </p>
+            </div>
+
+            <div class="divider"></div>
+
             <h3 class="sub-title"><i class="fa-solid fa-triangle-exclamation"></i> 危险操作</h3>
             <button class="btn-danger" @click="clearAllData">清除所有数据</button>
           </div>
@@ -443,7 +473,10 @@ import {
   backupFileName,
   parseBackup,
   applyBackup,
+  listAutoBackups,
+  restoreAutoBackup,
 } from '../../utils/dataBackup'
+import { clearAppData, storageEstimate } from '../../utils/kv'
 
 const settings = useSettingsStore()
 const visible = ref(false)
@@ -467,10 +500,14 @@ const currentSection = computed(() => sections.find(s => s.key === activeSection
 
 // 数据设置：本地存储统计
 const usage = ref({ totalBytes: 0, keyCount: 0, modules: [] })
+const quota = ref({ usage: 0, quota: 0, percent: 0, engine: 'idb' })
+const autoBackups = ref([])
 const expandedModule = ref('')
 
-function refreshUsage() {
+async function refreshUsage() {
   usage.value = computeStorageUsage()
+  autoBackups.value = listAutoBackups()
+  quota.value = await storageEstimate()
 }
 
 function toggleModule(key) {
@@ -723,8 +760,22 @@ function saveAndClose() {
 async function clearAllData() {
   const ok = await window.__ui?.showConfirm('确定要清除所有数据吗？这将删除所有对话记录和设置，此操作不可撤销！')
   if (ok) {
-    localStorage.clear()
+    await clearAppData()
     location.reload()
+  }
+}
+
+async function restoreBackup(item) {
+  const ok = await window.__ui?.showConfirm(
+    `恢复到 ${item.date} 的自动备份？当前数据会被覆盖，导入完成后页面将自动刷新。`
+  )
+  if (!ok) return
+  try {
+    const count = await restoreAutoBackup(item.key)
+    window.__ui?.showToast(`已恢复 ${count} 项数据，正在刷新…`, 'success')
+    setTimeout(() => location.reload(), 600)
+  } catch (err) {
+    window.__ui?.showToast(`恢复失败：${err?.message || '备份文件不可用'}`, 'error')
   }
 }
 
@@ -762,7 +813,7 @@ async function importAllData(e) {
   if (!ok) return
 
   try {
-    const count = applyBackup(parsed.entries)
+    const count = await applyBackup(parsed.entries)
     window.__ui?.showToast(`已恢复 ${count} 项数据，正在刷新…`, 'success')
     setTimeout(() => location.reload(), 600)
   } catch {
@@ -1224,6 +1275,59 @@ input[type="range"] {
   background: var(--bg-input);
 }
 .usage-seg { height: 100%; min-width: 2px; }
+
+/* 存储引擎与配额 */
+.engine-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.engine-name i { margin-right: 5px; font-size: 11px; color: var(--text-muted); }
+.engine-size { color: var(--text-muted); white-space: nowrap; }
+.engine-bar {
+  height: 4px;
+  margin-top: 8px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--bg-input);
+}
+.engine-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--text-secondary);
+  transition: width 0.2s;
+}
+.engine-bar span.warn { background: #ef4444; }
+.engine-hint { margin-top: 10px; }
+
+/* 自动备份 */
+.backup-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.backup-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-card);
+  font-size: 13px;
+}
+.backup-date { flex: 1; color: var(--text-primary); }
+.backup-size { font-size: 12px; color: var(--text-muted); }
+.btn-link {
+  border: none;
+  background: none;
+  color: var(--accent-color, #0ea5e9);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.btn-link:hover { text-decoration: underline; }
 
 .module-list {
   display: flex;

@@ -1,4 +1,6 @@
 // 主聊天会话数据层 v2：分支 / 多版本消息 / 旧数据迁移
+import { getItem, setItem } from './kv'
+
 const LEGACY_PREFIX = 'chat_messages_'
 const CONV_PREFIX = 'chat_conv_v2_'
 
@@ -88,13 +90,13 @@ export function normalizeConversation(obj) {
 export function loadConversation(topicId) {
   if (!topicId) return createConversation()
   try {
-    const raw = localStorage.getItem(conversationKey(topicId))
+    const raw = getItem(conversationKey(topicId))
     if (raw) return normalizeConversation(JSON.parse(raw))
   } catch {
     // v2 数据损坏时继续尝试旧数据
   }
   try {
-    const legacy = localStorage.getItem(legacyKey(topicId))
+    const legacy = getItem(legacyKey(topicId))
     if (legacy) {
       const list = JSON.parse(legacy)
       if (Array.isArray(list)) {
@@ -112,15 +114,15 @@ export function loadConversation(topicId) {
 
 export function saveConversation(topicId, conv) {
   if (!topicId || !conv) return
-  localStorage.setItem(conversationKey(topicId), JSON.stringify(conv))
+  setItem(conversationKey(topicId), JSON.stringify(conv))
 }
 
 export function hasStoredConversation(topicId) {
-  return localStorage.getItem(conversationKey(topicId)) !== null
+  return getItem(conversationKey(topicId)) !== null
 }
 
 export function hasLegacyConversation(topicId) {
-  return localStorage.getItem(legacyKey(topicId)) !== null
+  return getItem(legacyKey(topicId)) !== null
 }
 
 /**

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import { loadTopics, saveTopics } from '../utils/storage'
+import { removeItem } from '../utils/kv'
 
 let nextId = Date.now()
 
@@ -44,8 +45,8 @@ export const useTopicsStore = defineStore('topics', () => {
     if (idx === -1) return
     topics.value.splice(idx, 1)
     // 清理该话题的消息（v2 会话数据；旧键一并清掉）
-    localStorage.removeItem(`chat_messages_${id}`)
-    localStorage.removeItem(`chat_conv_v2_${id}`)
+    removeItem(`chat_messages_${id}`)
+    removeItem(`chat_conv_v2_${id}`)
     if (currentTopicId.value === id) {
       currentTopicId.value = topics.value[0]?.id ?? null
     }
