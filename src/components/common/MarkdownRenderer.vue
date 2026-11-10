@@ -5,40 +5,13 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github-dark.css'
 import { useSettingsStore } from '../../stores/settings'
 import { applySymbolStyles } from '../../utils/symbolStyles'
 
 marked.setOptions({ breaks: true, gfm: true })
-
-// 文档预览等场景使用：移除脚本、事件属性与危险链接
-const BLOCKED_TAGS = new Set(['script', 'iframe', 'object', 'embed', 'link', 'meta', 'style', 'form', 'base'])
-function sanitizeHtml(html) {
-  try {
-    const doc = new DOMParser().parseFromString(String(html || ''), 'text/html')
-    for (const el of doc.querySelectorAll('*')) {
-      if (BLOCKED_TAGS.has(el.tagName.toLowerCase())) {
-        el.remove()
-        continue
-      }
-      for (const attr of [...el.attributes]) {
-        const name = attr.name.toLowerCase()
-        if (name.startsWith('on')) {
-          el.removeAttribute(attr.name)
-        } else if (name === 'href' || name === 'src' || name === 'xlink:href') {
-          const normalized = attr.value.replace(/[\u0000-\u001f\s]+/g, '')
-          if (/^(javascript|vbscript|data:text\/html)/i.test(normalized)) {
-            el.removeAttribute(attr.name)
-          }
-        }
-      }
-    }
-    return doc.body.innerHTML
-  } catch {
-    return html
-  }
-}
 
 // 图表代码块：mermaid / echarts，改为占位符，挂载后异步渲染
 const DIAGRAM_LANGS = { mermaid: 'mermaid', echarts: 'echarts', chart: 'echarts' }
@@ -54,7 +27,7 @@ renderer.code = function({ text, lang }) {
   }
   const id = codeIdx++
   const encoded = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-  let highlighted = ''
+  let highlighted
   if (lang && hljs.getLanguage(lang)) {
     try { highlighted = hljs.highlight(text, { language: lang }).value } catch { highlighted = hljs.highlightAuto(text).value }
   } else {
@@ -76,7 +49,8 @@ marked.use({ renderer })
 const props = defineProps({
   content: { type: String, default: '' },
   symbolStyle: { type: Boolean, default: false },
-  sanitize: { type: Boolean, default: false },
+  // 文档预览模式：外链改为新标签打开，避免把应用页面导航走
+  preview: { type: Boolean, default: false },
 })
 
 const settings = useSettingsStore()
@@ -89,7 +63,9 @@ const renderedHtml = computed(() => {
     html = props.content.replace(/</g, '&lt;').replace(/\n/g, '<br>')
   }
   const output = props.symbolStyle ? applySymbolStyles(html, settings.symbolRules) : html
-  return props.sanitize ? sanitizeHtml(output) : output
+  // 模型/工具/网页内容不可信：所有渲染输出统一消毒（保留 data-* 供图表与复制按钮使用）
+  // 禁止 style 标签，防止消息内容注入页面级 CSS；内联 style 属性（符号样式）不受影响
+  return DOMPurify.sanitize(output, { FORBID_TAGS: ['style'] })
 })
 
 // ---- 图表渲染（按需动态加载，不进首屏包） ----
@@ -242,8 +218,7 @@ onUnmounted(() => {
 })
 
 function onClick(e) {
-  // 文档预览：外链改为新标签打开，避免把应用页面导航走
-  if (props.sanitize) {
+  if (props.preview) {
     const link = e.target.closest('a')
     if (link) {
       const href = link.getAttribute('href') || ''

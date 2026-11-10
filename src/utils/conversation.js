@@ -38,6 +38,7 @@ export function createConversation() {
 
 function normalizeMessage(input, fallbackId) {
   const msg = { ...input }
+  delete msg.streaming
   if (!msg.id) msg.id = fallbackId || newMessageId()
   if (!msg.ts) msg.ts = Date.now()
   if (typeof msg.content !== 'string') msg.content = String(msg.content ?? '')
@@ -114,7 +115,15 @@ export function loadConversation(topicId) {
 
 export function saveConversation(topicId, conv) {
   if (!topicId || !conv) return
-  setItem(conversationKey(topicId), JSON.stringify(conv))
+  // 流式占位消息只是生成期间的临时节点，不写入存储
+  const snapshot = {
+    ...conv,
+    branches: conv.branches.map(branch => ({
+      ...branch,
+      messages: branch.messages.filter(msg => !msg.streaming),
+    })),
+  }
+  setItem(conversationKey(topicId), JSON.stringify(snapshot))
 }
 
 export function hasStoredConversation(topicId) {

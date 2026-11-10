@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed, watch } from 'vue'
+import { ref, computed } from 'vue'
 import { loadTopics, saveTopics } from '../utils/storage'
 import { removeItem } from '../utils/kv'
 

@@ -1,19 +1,13 @@
 /**
- * 计算沙箱 Web Worker：
- * 1. 对 CSV/TSV 做本地校验与统计，给模型提供可信的计算结果；
- * 2. 执行受限 JavaScript，用于模型给出的计算代码。
- * 所有任务都在 Worker 中运行，主线程只负责超时与消息转发。
+ * CSV/TSV 表格解析与统计（纯函数，无浏览器依赖，可单测）。
+ * 由 tableWorker 在 Worker 中调用，为主线程提供可信的本地统计结果。
  */
 
 const MAX_TABLE_ROWS = 20000
 const MAX_TABLE_CHARS = 300000
 const MAX_OUTPUT_CHARS = 20000
-const MAX_JS_CHARS = 20000
 
 const EMPTY_VALUES = new Set(['', '-', '--', '—', 'NA', 'N/A', 'NULL', 'null', 'NaN', 'nan'])
-
-// 禁止网络、子 Worker、动态导入与页面存储逃逸入口
-const JS_BLOCKED = /\b(fetch|XMLHttpRequest|WebSocket|EventSource|importScripts|SharedWorker|Worker|indexedDB|caches|navigator\s*\.\s*sendBeacon|globalThis|self|Function|eval)\b|import\s*\(/
 
 function truncate(text, max = MAX_OUTPUT_CHARS) {
   const value = String(text ?? '')
@@ -25,51 +19,6 @@ function shortText(value, max = 40) {
   return text.length > max ? `${text.slice(0, max)}…` : text
 }
 
-function formatValue(value) {
-  if (typeof value === 'string') return value
-  if (value === null || value === undefined) return String(value)
-  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') return String(value)
-  try {
-    return JSON.stringify(value, (_, v) => typeof v === 'bigint' ? `${v}n` : v, 2)
-  } catch {
-    return String(value)
-  }
-}
-
-// ---- JavaScript 执行 ----
-async function runJsCode(rawCode) {
-  const code = String(rawCode || '')
-  if (!code.trim()) throw new Error('代码为空')
-  if (code.length > MAX_JS_CHARS) throw new Error(`代码过长，最多 ${MAX_JS_CHARS} 字符`)
-  if (JS_BLOCKED.test(code)) throw new Error('沙箱禁止网络请求、子 Worker 或动态执行')
-
-  const logs = []
-  let logSize = 0
-  const original = { log: console.log, warn: console.warn, error: console.error, info: console.info }
-  const capture = (...args) => {
-    const line = args.map(formatValue).join(' ')
-    logSize += line.length
-    if (logSize <= MAX_OUTPUT_CHARS * 2) logs.push(line)
-  }
-  console.log = capture
-  console.warn = capture
-  console.error = capture
-  console.info = capture
-
-  try {
-    const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
-    const fn = new AsyncFunction(`"use strict";\n${code}`)
-    const value = await fn()
-    return {
-      output: value === undefined ? '' : truncate(formatValue(value)),
-      logs: truncate(logs.join('\n')),
-    }
-  } finally {
-    Object.assign(console, original)
-  }
-}
-
-// ---- CSV / TSV 解析与统计 ----
 function countDelimiter(line, delimiter) {
   let count = 0
   let inQuotes = false
@@ -85,7 +34,7 @@ function countDelimiter(line, delimiter) {
   return count
 }
 
-function detectDelimiter(lines) {
+export function detectDelimiter(lines) {
   const sample = lines.filter(line => line.trim()).slice(0, 5)
   if (!sample.length) return ','
   let best = ','
@@ -101,7 +50,7 @@ function detectDelimiter(lines) {
   return best
 }
 
-function parseDelimited(text, delimiter) {
+export function parseDelimited(text, delimiter) {
   const rows = []
   let row = []
   let field = ''
@@ -140,7 +89,7 @@ function parseDelimited(text, delimiter) {
   return rows
 }
 
-function toNumber(value) {
+export function toNumber(value) {
   const raw = String(value ?? '').trim()
   if (!raw) return null
   const cleaned = raw.replace(/[,，\s]/g, '').replace(/^[¥$€£]/, '').replace(/%$/, '')
@@ -301,7 +250,7 @@ function splitSheetSections(text) {
   return sections.length ? sections : [{ name: '', lines }]
 }
 
-function analyzeTableText(text) {
+export function analyzeTableText(text) {
   const sections = splitSheetSections(text)
   const summaries = []
   for (const section of sections) {
@@ -309,25 +258,4 @@ function analyzeTableText(text) {
     if (summary) summaries.push(summary)
   }
   return truncate(summaries.join('\n\n'), 12000)
-}
-
-self.onmessage = async (event) => {
-  const { id, kind, payload } = event.data || {}
-  if (!id) return
-  try {
-    if (kind === 'table') {
-      const summary = analyzeTableText(payload?.text || '')
-      if (!summary) throw new Error('没有可统计的表格数据')
-      self.postMessage({ id, ok: true, summary })
-      return
-    }
-    if (kind === 'js') {
-      const result = await runJsCode(payload?.code || '')
-      self.postMessage({ id, ok: true, ...result })
-      return
-    }
-    throw new Error('未知的沙箱任务')
-  } catch (err) {
-    self.postMessage({ id, ok: false, error: err?.message || String(err) })
-  }
 }

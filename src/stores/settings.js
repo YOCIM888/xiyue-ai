@@ -25,29 +25,34 @@ export const useSettingsStore = defineStore('settings', () => {
     replyRules: '1. 不得过度说教、批评，保持专业性。\n2. 对于不确定或不准确的问题，应在文末提示。',
     replyRulesEnabled: true,
     thinkingEnabled: false,
+    reasoningEffort: 'default',
+    maxToolCallsPerRound: 10,
     userAvatar: '',
     personaEnabled: true,
     darkMode: false,
     linkSkillEnabled: true,
-    documentSkillEnabled: false,
-    ocrSkillEnabled: false,
+    documentSkillEnabled: true,
+    ocrSkillEnabled: true,
     modelVisionMode: 'auto',
-    searchSkillEnabled: false,
+    searchSkillEnabled: true,
     forceSearch: false,
     tavilyApiKey: '',
     searchDepth: 'basic',
     searchMaxResults: 5,
     searchMaxChars: 10000,
     searchItemMaxChars: 1200,
-    imageGenSkillEnabled: false,
+    imageGenSkillEnabled: true,
     calcSandboxEnabled: true,
+    browserSkillEnabled: true,
+    browserAllowedDomains: '',
+    workModeEnabled: true,
     starryReplyLength: 'normal',
     starryActivity: 'normal',
     // 副模型 API：负责多模态扩展（图片理解、生图）
     secondaryApiBase: 'https://open.bigmodel.cn/api/paas/v4',
     secondaryApiKey: '',
     secondaryModel: 'glm-4.6v-flash',
-    secondaryImageModel: 'glm-image',
+    secondaryImageModel: 'cogview-3-flash',
     // 用量费用估算单价（元 / 百万 token），0 表示不估算
     usageInputPrice: 0,
     usageOutputPrice: 0,
@@ -60,6 +65,9 @@ export const useSettingsStore = defineStore('settings', () => {
   const saved = loadSettings()
   // 旧版没有用户人设/回复规则配置：视为从旧「提示设置」升级，默认开启 AI 人设与回复规则
   const legacyPromptConfig = !('userPersona' in saved)
+  // 技能默认全部开启：旧存档里的关闭值多是升级前的默认值，首次升级统一放开一次，之后尊重用户主动关闭
+  const skillsMigrated = saved.skillsAllOnV1 === true
+  const skillFlag = key => (skillsMigrated ? (saved[key] ?? defaults[key]) : true)
 
   const apiKey = ref(saved.apiKey ?? defaults.apiKey)
   const apiBase = ref(saved.apiBase ?? defaults.apiBase)
@@ -78,22 +86,33 @@ export const useSettingsStore = defineStore('settings', () => {
   const replyRules = ref(saved.replyRules ?? defaults.replyRules)
   const replyRulesEnabled = ref(saved.replyRulesEnabled ?? defaults.replyRulesEnabled)
   const thinkingEnabled = ref(saved.thinkingEnabled ?? defaults.thinkingEnabled)
+  const reasoningEffort = ref(
+    ['default', 'low', 'medium', 'high'].includes(saved.reasoningEffort)
+      ? saved.reasoningEffort
+      : defaults.reasoningEffort
+  )
+  const maxToolCallsPerRound = ref(
+    Math.max(1, Math.min(200, Number(saved.maxToolCallsPerRound) || defaults.maxToolCallsPerRound))
+  )
   const userAvatar = ref(saved.userAvatar ?? defaults.userAvatar)
   const personaEnabled = ref(legacyPromptConfig ? defaults.personaEnabled : (saved.personaEnabled ?? defaults.personaEnabled))
   const darkMode = ref(saved.darkMode ?? window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? defaults.darkMode)
-  const linkSkillEnabled = ref(saved.linkSkillEnabled ?? defaults.linkSkillEnabled)
-  const documentSkillEnabled = ref(saved.documentSkillEnabled ?? defaults.documentSkillEnabled)
-  const ocrSkillEnabled = ref(saved.ocrSkillEnabled ?? defaults.ocrSkillEnabled)
+  const linkSkillEnabled = ref(skillFlag('linkSkillEnabled'))
+  const documentSkillEnabled = ref(skillFlag('documentSkillEnabled'))
+  const ocrSkillEnabled = ref(skillFlag('ocrSkillEnabled'))
   const modelVisionMode = ref(saved.modelVisionMode ?? defaults.modelVisionMode)
-  const searchSkillEnabled = ref(saved.searchSkillEnabled ?? defaults.searchSkillEnabled)
+  const searchSkillEnabled = ref(skillFlag('searchSkillEnabled'))
   const forceSearch = ref(saved.forceSearch ?? defaults.forceSearch)
   const tavilyApiKey = ref(saved.tavilyApiKey ?? defaults.tavilyApiKey)
   const searchDepth = ref(saved.searchDepth ?? defaults.searchDepth)
   const searchMaxResults = ref(saved.searchMaxResults ?? defaults.searchMaxResults)
   const searchMaxChars = ref(saved.searchMaxChars ?? defaults.searchMaxChars)
   const searchItemMaxChars = ref(saved.searchItemMaxChars ?? defaults.searchItemMaxChars)
-  const imageGenSkillEnabled = ref(saved.imageGenSkillEnabled ?? defaults.imageGenSkillEnabled)
-  const calcSandboxEnabled = ref(saved.calcSandboxEnabled ?? defaults.calcSandboxEnabled)
+  const imageGenSkillEnabled = ref(skillFlag('imageGenSkillEnabled'))
+  const calcSandboxEnabled = ref(skillFlag('calcSandboxEnabled'))
+  const browserSkillEnabled = ref(skillFlag('browserSkillEnabled'))
+  const browserAllowedDomains = ref(saved.browserAllowedDomains ?? defaults.browserAllowedDomains)
+  const workModeEnabled = ref(skillFlag('workModeEnabled'))
   const starryReplyLength = ref(saved.starryReplyLength ?? defaults.starryReplyLength)
   const starryActivity = ref(saved.starryActivity ?? defaults.starryActivity)
   const secondaryApiBase = ref(saved.secondaryApiBase ?? defaults.secondaryApiBase)
@@ -145,12 +164,25 @@ export const useSettingsStore = defineStore('settings', () => {
     if (preset.maxTokens) maxTokens.value = preset.maxTokens
   }
 
-  // 副模型预设：智谱多模态（图片理解 + 生图）
+  // 副模型预设：智谱多模态（图片理解 + 生图），或自定义任意 OpenAI 兼容服务
   const secondaryPresets = [
     { label: 'GLM-4.6V-Flash', model: 'glm-4.6v-flash', base: 'https://open.bigmodel.cn/api/paas/v4' },
+    { label: '自定义', custom: true },
   ]
 
+  const isCustomSecondary = computed(
+    () => !secondaryPresets.some(p => !p.custom && p.base === secondaryApiBase.value && p.model === secondaryModel.value)
+  )
+
   function applySecondaryPreset(preset) {
+    if (preset.custom) {
+      // 只在当前仍是内置预设时清空，避免覆盖用户已填好的自定义配置
+      if (!isCustomSecondary.value) {
+        secondaryApiBase.value = ''
+        secondaryModel.value = ''
+      }
+      return
+    }
     secondaryModel.value = preset.model
     secondaryApiBase.value = preset.base
   }
@@ -174,6 +206,8 @@ export const useSettingsStore = defineStore('settings', () => {
       replyRules: replyRules.value,
       replyRulesEnabled: replyRulesEnabled.value,
       thinkingEnabled: thinkingEnabled.value,
+      reasoningEffort: reasoningEffort.value,
+      maxToolCallsPerRound: maxToolCallsPerRound.value,
       userAvatar: userAvatar.value,
       personaEnabled: personaEnabled.value,
       darkMode: darkMode.value,
@@ -190,6 +224,9 @@ export const useSettingsStore = defineStore('settings', () => {
       searchItemMaxChars: searchItemMaxChars.value,
       imageGenSkillEnabled: imageGenSkillEnabled.value,
       calcSandboxEnabled: calcSandboxEnabled.value,
+      browserSkillEnabled: browserSkillEnabled.value,
+      browserAllowedDomains: browserAllowedDomains.value,
+      workModeEnabled: workModeEnabled.value,
       starryReplyLength: starryReplyLength.value,
       starryActivity: starryActivity.value,
       secondaryApiBase: secondaryApiBase.value,
@@ -202,6 +239,7 @@ export const useSettingsStore = defineStore('settings', () => {
       symbolRules: symbolRules.value,
       hideUserAvatar: hideUserAvatar.value,
       hideAiAvatar: hideAiAvatar.value,
+      skillsAllOnV1: true,
     })
   }
 
@@ -209,23 +247,23 @@ export const useSettingsStore = defineStore('settings', () => {
 
   // 自动持久化：任何设置变更立刻保存
   watch(
-    [apiKey, apiBase, model, temperature, maxTokens, contextLength, topP, personaPrompt, userName, userPersona, replyRules, replyRulesEnabled, thinkingEnabled, userAvatar, personaEnabled, darkMode, linkSkillEnabled, documentSkillEnabled, ocrSkillEnabled, modelVisionMode, searchSkillEnabled, forceSearch, tavilyApiKey, searchDepth, searchMaxResults, searchMaxChars, searchItemMaxChars, imageGenSkillEnabled, calcSandboxEnabled, starryReplyLength, starryActivity, secondaryApiBase, secondaryApiKey, secondaryModel, secondaryImageModel, usageInputPrice, usageOutputPrice, backgroundImage, hideUserAvatar, hideAiAvatar],
+    [apiKey, apiBase, model, temperature, maxTokens, contextLength, topP, personaPrompt, userName, userPersona, replyRules, replyRulesEnabled, thinkingEnabled, reasoningEffort, maxToolCallsPerRound, userAvatar, personaEnabled, darkMode, linkSkillEnabled, documentSkillEnabled, ocrSkillEnabled, modelVisionMode, searchSkillEnabled, forceSearch, tavilyApiKey, searchDepth, searchMaxResults, searchMaxChars, searchItemMaxChars, imageGenSkillEnabled, calcSandboxEnabled, browserSkillEnabled, browserAllowedDomains, workModeEnabled, starryReplyLength, starryActivity, secondaryApiBase, secondaryApiKey, secondaryModel, secondaryImageModel, usageInputPrice, usageOutputPrice, backgroundImage, hideUserAvatar, hideAiAvatar],
     () => persist(),
     { deep: false }
   )
   watch(symbolRules, () => persist(), { deep: true })
 
   // 老版本没有副模型配置：首次加载时写回默认结构，同时保留原有主模型配置
-  if (!('secondaryApiBase' in saved) || legacyPromptConfig) {
+  if (!('secondaryApiBase' in saved) || legacyPromptConfig || !skillsMigrated) {
     persist()
   }
 
   return {
-    apiKey, apiBase, model, temperature, maxTokens, contextLength, topP, personaPrompt, userName, userPersona, replyRules, replyRulesEnabled, thinkingEnabled, userAvatar, personaEnabled, darkMode, linkSkillEnabled,
+    apiKey, apiBase, model, temperature, maxTokens, contextLength, topP, personaPrompt, userName, userPersona, replyRules, replyRulesEnabled, thinkingEnabled, reasoningEffort, maxToolCallsPerRound, userAvatar, personaEnabled, darkMode, linkSkillEnabled,
     backgroundImage, symbolRules, hideUserAvatar, hideAiAvatar, documentSkillEnabled,
     ocrSkillEnabled, modelVisionMode,
-    searchSkillEnabled, forceSearch, tavilyApiKey, searchDepth, searchMaxResults, searchMaxChars, searchItemMaxChars, imageGenSkillEnabled, calcSandboxEnabled, starryReplyLength, starryActivity,
-    secondaryApiBase, secondaryApiKey, secondaryModel, secondaryImageModel, secondaryReady, secondaryPresets, applySecondaryPreset,
+    searchSkillEnabled, forceSearch, tavilyApiKey, searchDepth, searchMaxResults, searchMaxChars, searchItemMaxChars, imageGenSkillEnabled, calcSandboxEnabled, browserSkillEnabled, browserAllowedDomains, workModeEnabled, starryReplyLength, starryActivity,
+    secondaryApiBase, secondaryApiKey, secondaryModel, secondaryImageModel, secondaryReady, secondaryPresets, isCustomSecondary, applySecondaryPreset,
     usageInputPrice, usageOutputPrice,
     modelPresets, applyPreset, persist, settingsReady, defaults,
   }

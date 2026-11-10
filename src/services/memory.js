@@ -16,7 +16,6 @@ export async function extractMemoryEntries({
   apiBase,
   apiKey,
   model,
-  temperature,
   messages,
   userText,
 }) {

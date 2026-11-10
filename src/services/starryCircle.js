@@ -242,7 +242,7 @@ export async function generateCirclePosts({
     const knownPosts = [...existingPosts, ...accepted, ...rejected]
     const avoidSummaries = knownPosts.slice(0, 28).map(post => summarizePost(post))
 
-    let batch = []
+    let batch
     try {
       batch = await requestCirclePosts({
         friends,

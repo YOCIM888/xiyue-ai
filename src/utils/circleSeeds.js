@@ -22,7 +22,7 @@ function cleanChatText(text) {
     .replace(/`[^`]*`/g, ' ')
     .replace(/https?:\/\/\S+/g, ' ')
     .replace(/❌\s*错误：[^\n]*/g, ' ')
-    .replace(/[*_~#>|\[\]()]/g, ' ')
+    .replace(/[*_~#>|[\]()]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
 }
@@ -103,7 +103,7 @@ export function collectRecentChatSeeds({
   const picked = []
 
   for (const topic of recentTopics) {
-    let conv = null
+    let conv
     try {
       const raw = getItem(conversationKey(topic.id))
       if (!raw) continue // 没有 v2 数据就跳过，不回读旧键

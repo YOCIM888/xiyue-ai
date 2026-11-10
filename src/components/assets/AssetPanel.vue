@@ -43,7 +43,7 @@
             </span>
           </div>
           <div v-if="previewMode" class="ae-preview">
-            <MarkdownRenderer v-if="editingIsMarkdown" :content="editing.content" sanitize />
+            <MarkdownRenderer v-if="editingIsMarkdown" :content="editing.content" preview />
             <pre v-else class="ae-plain">{{ editing.content }}</pre>
           </div>
           <textarea v-else v-model="editing.content" class="ae-content" placeholder="内容…"></textarea>

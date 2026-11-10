@@ -1,8 +1,57 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import JSZip from 'jszip'
+import { readdir, readFile } from 'node:fs/promises'
+import { join, relative } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 // 使用相对资源路径，同时兼容 GitHub Pages 项目路径与自定义域名
 const base = './'
+const extensionDir = fileURLToPath(new URL('./extension', import.meta.url))
+
+// 把 extension/ 打包成可下载的 zip（开发/预览服务器与构建产物都提供）
+async function buildExtensionZip() {
+  const zip = new JSZip()
+  async function walk(dir) {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name)
+      if (entry.isDirectory()) await walk(full)
+      else zip.file(relative(extensionDir, full).replace(/\\/g, '/'), await readFile(full))
+    }
+  }
+  await walk(extensionDir)
+  return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' })
+}
+
+function extensionDownloadPlugin() {
+  const middleware = async (req, res, next) => {
+    const pathname = new URL(req.url, 'http://localhost').pathname
+    if (pathname !== '/browser-extension.zip') return next()
+    try {
+      const buffer = await buildExtensionZip()
+      res.statusCode = 200
+      res.setHeader('Content-Type', 'application/zip')
+      res.setHeader('Content-Disposition', 'attachment; filename="xiyue-browser-extension.zip"')
+      res.end(buffer)
+    } catch (err) {
+      res.statusCode = 500
+      res.end(`打包扩展失败：${err.message}`)
+    }
+  }
+  return {
+    name: 'browser-extension-download',
+    configureServer(server) {
+      server.middlewares.use(middleware)
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(middleware)
+    },
+    async generateBundle() {
+      const buffer = await buildExtensionZip()
+      this.emitFile({ type: 'asset', fileName: 'browser-extension.zip', source: buffer })
+    },
+  }
+}
 
 // 链接识别：抓取任意网页正文（仅开发/预览服务器可用）
 function linkReader() {
@@ -57,7 +106,7 @@ function linkReader() {
 
 export default defineConfig({
   base,
-  plugins: [vue(), linkReader()],
+  plugins: [vue(), linkReader(), extensionDownloadPlugin()],
   server: {
     host: '0.0.0.0',
     port: 5174,

@@ -266,15 +266,15 @@
                 {{ settings.secondaryReady ? '已配置' : '未配置' }}
               </span>
             </div>
-            <p class="hint">主模型不支持视觉或失败时，图片理解自动交给副模型；AI 生图也由副模型负责。</p>
+            <p class="hint">主模型不支持视觉或失败时，图片理解自动交给副模型；AI 生图也由副模型负责。支持任意兼容 OpenAI 格式的服务（智谱、OpenAI、DeepSeek、硅基流动、OpenRouter 等），Base URL 填接口根地址。</p>
 
             <div class="preset-grid">
               <button
                 v-for="p in settings.secondaryPresets"
                 :key="p.label"
                 class="preset-btn"
-                :class="{ active: settings.secondaryApiBase === p.base && settings.secondaryModel === p.model }"
-                @click="settings.applySecondaryPreset(p)"
+                :class="{ active: p.custom ? settings.isCustomSecondary : settings.secondaryApiBase === p.base && settings.secondaryModel === p.model }"
+                @click="applySecondaryPreset(p)"
               >
                 {{ p.label }}
               </button>
@@ -282,16 +282,16 @@
 
             <div class="field secondary-first">
               <label>Base URL</label>
-              <input v-model="settings.secondaryApiBase" type="text" placeholder="https://open.bigmodel.cn/api/paas/v4" />
+              <input ref="secondaryBaseInput" v-model="settings.secondaryApiBase" type="text" placeholder="https://api.openai.com/v1" />
             </div>
             <div class="field">
               <label>视觉模型名称</label>
-              <input v-model="settings.secondaryModel" type="text" placeholder="glm-4.6v-flash" />
+              <input v-model="settings.secondaryModel" type="text" placeholder="如 gpt-4o-mini / glm-4.6v-flash" />
             </div>
             <div class="field">
               <label>API Key</label>
               <div class="password-field">
-                <input v-model="settings.secondaryApiKey" :type="showSecondaryKey ? 'text' : 'password'" placeholder="智谱 API Key" />
+                <input v-model="settings.secondaryApiKey" :type="showSecondaryKey ? 'text' : 'password'" placeholder="副模型 API Key" />
                 <button class="btn-toggle-pw" @click="showSecondaryKey = !showSecondaryKey">
                   <svg v-if="!showSecondaryKey" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
                   <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
@@ -300,12 +300,15 @@
             </div>
             <div class="field">
               <label>生图模型</label>
-              <select v-model="settings.secondaryImageModel" class="setting-select">
-                <option value="cogview-3-flash">cogview-3-flash</option>
-                <option value="cogview-4">cogview-4</option>
-                <option value="cogview-4-250304">cogview-4-250304</option>
-                <option value="glm-image">glm-image</option>
-              </select>
+              <input v-model="settings.secondaryImageModel" type="text" list="secondary-image-models" placeholder="glm-image" />
+              <datalist id="secondary-image-models">
+                <option value="glm-image"></option>
+                <option value="cogview-4"></option>
+                <option value="cogview-3-flash"></option>
+                <option value="dall-e-3"></option>
+                <option value="flux.1-schnell"></option>
+              </datalist>
+              <span class="range-hint">可填任意生图模型名，接口按 {Base URL}/images/generations 调用；留空默认 glm-image。</span>
             </div>
           </div>
 
@@ -373,6 +376,33 @@
             <div class="field">
               <label>Top P ({{ settings.topP }})</label>
               <input v-model.number="settings.topP" type="range" min="0" max="1" step="0.05" />
+            </div>
+            <div class="field">
+              <label>思考强度</label>
+              <div class="tier-grid four">
+                <button
+                  v-for="opt in reasoningOptions"
+                  :key="opt.value"
+                  class="tier-btn"
+                  :class="{ active: settings.reasoningEffort === opt.value }"
+                  @click="settings.reasoningEffort = opt.value"
+                >
+                  {{ opt.label }}
+                </button>
+              </div>
+              <span class="range-hint">仅对支持推理强度的模型生效（如 GPT-5 系列）；开启思考后传递 reasoning_effort，默认跟随服务商。</span>
+            </div>
+            <div class="field">
+              <label>每轮工具调用上限（{{ settings.maxToolCallsPerRound }} 次）</label>
+              <input
+                v-model.number="settings.maxToolCallsPerRound"
+                type="number"
+                min="1"
+                max="200"
+                step="1"
+                @change="clampToolCalls"
+              />
+              <span class="range-hint">单轮回复中最多执行的工具调用数，默认 10，可调 1–200；调高后模型一次可并行完成更多步骤。</span>
             </div>
             <div class="field">
               <label>上下文长度</label>
@@ -586,7 +616,7 @@
 </template>
 
 <script setup>
-import { ref, computed, reactive } from 'vue'
+import { ref, computed, reactive, nextTick } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
 import {
   computeStorageUsage,
@@ -611,6 +641,12 @@ const settings = useSettingsStore()
 const visible = ref(false)
 const showKey = ref(false)
 const showSecondaryKey = ref(false)
+const secondaryBaseInput = ref(null)
+
+function applySecondaryPreset(preset) {
+  settings.applySecondaryPreset(preset)
+  if (preset.custom) nextTick(() => secondaryBaseInput.value?.focus())
+}
 const showSearchKey = ref(false)
 const fileInput = ref(null)
 const importDataInput = ref(null)
@@ -620,7 +656,7 @@ const sections = [
   { key: 'usage', title: '用量查询', desc: '服务商余额与本应用消耗' },
   { key: 'model', title: '模型设置', desc: '模型选择与 API 配置' },
   { key: 'search', title: '搜索服务', desc: 'Tavily API Key 与搜索深度' },
-  { key: 'params', title: '参数设置', desc: 'Temperature、Top P 与上下文/输出长度' },
+  { key: 'params', title: '参数设置', desc: '思考强度、工具调用上限与上下文/输出长度' },
   { key: 'appearance', title: '外观设置', desc: '自定义背景、符号文字样式与头像显示' },
   { key: 'data', title: '数据设置', desc: '存储占用、备份导出与导入恢复' },
 ]
@@ -720,6 +756,17 @@ const outputOptions = [
   { label: '128K', value: 131072 },
   { label: '384K', value: 393216 },
 ]
+const reasoningOptions = [
+  { label: '默认', value: 'default' },
+  { label: '低', value: 'low' },
+  { label: '中', value: 'medium' },
+  { label: '高', value: 'high' },
+]
+
+function clampToolCalls() {
+  const value = Math.round(Number(settings.maxToolCallsPerRound) || 10)
+  settings.maxToolCallsPerRound = Math.max(1, Math.min(200, value))
+}
 
 function goMenu() { activeSection.value = '' }
 
@@ -1231,6 +1278,9 @@ async function importAllData(e) {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 6px;
+}
+.tier-grid.four {
+  grid-template-columns: repeat(4, 1fr);
 }
 .tier-btn {
   padding: 8px 0;

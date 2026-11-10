@@ -26,7 +26,23 @@
               <span class="switch-track"><span class="switch-thumb"></span></span>
             </label>
           </div>
-          
+
+          <div class="skill-card">
+            <div class="skill-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+            </div>
+            <div class="skill-info">
+              <div class="skill-name">
+                工作模式
+                <span class="skill-tag">默认</span>
+              </div>
+              <div class="skill-desc">让 AI 读写工作区文件，帮你写代码、做项目、保存文档</div>
+            </div>
+            <label class="switch" :title="settings.workModeEnabled ? '点击关闭' : '点击开启'">
+              <input v-model="settings.workModeEnabled" type="checkbox" />
+              <span class="switch-track"><span class="switch-thumb"></span></span>
+            </label>
+          </div>
 
           <div class="skill-card">
             <div class="skill-icon">
@@ -113,30 +129,94 @@
             </label>
           </div>
 
-          <p v-if="settings.calcSandboxEnabled" class="skill-hint">
-            表格附件与 /表格 会先本地统计；需要精确计算时模型会生成沙箱代码并执行。Python 首次运行需从 CDN 下载约 10MB 运行时。
-          </p>
+          <div class="skill-card">
+            <div class="skill-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg>
+            </div>
+            <div class="skill-info">
+              <div class="skill-name">
+                浏览器控制
+                <span class="skill-tag">扩展</span>
+              </div>
+              <div class="skill-desc">打开网页、点击、填写并截图，截图可交给视觉模型查看</div>
+            </div>
+            <label class="switch" :title="settings.browserSkillEnabled ? '点击关闭' : '点击开启'">
+              <input v-model="settings.browserSkillEnabled" type="checkbox" />
+              <span class="switch-track"><span class="switch-thumb"></span></span>
+            </label>
+          </div>
 
-          <p v-if="settings.ocrSkillEnabled" class="skill-hint" :class="{ warn: !settings.secondaryReady && visionStatus === 'text' }">
-            <template v-if="visionStatus === 'vision'">
-              图片将优先交给主模型「{{ settings.model }}」读取。<template v-if="settings.secondaryReady">主模型无法识别或请求失败时，自动切换到副模型「{{ settings.secondaryModel }}」。</template>
-            </template>
-            <template v-else-if="settings.secondaryReady">
-              主模型「{{ settings.model }}」{{ visionStatusText }}，图片将由副模型「{{ settings.secondaryModel }}」读取。<template v-if="visionStatus === 'unknown'">若主模型能处理图片，会优先使用主模型。</template>
-            </template>
-            <template v-else>
-              未配置副模型，将使用主模型「{{ settings.model }}」（{{ visionStatusText }}）。可在 设置 → 模型设置 → 副模型 API 配置视觉模型。
-            </template>
-          </p>
+          <div v-if="hasNotes" class="skill-notes">
+            <div v-if="settings.browserSkillEnabled" class="skill-actions">
+              <a class="browser-btn" href="./browser-extension.zip" download>下载扩展</a>
+              <button class="browser-btn" type="button" @click="checkBrowserConnection">检测连接</button>
+              <div ref="domainPopRef" class="domain-pop-wrap">
+                <button class="browser-btn" type="button" :class="{ active: domainPopOpen }" @click="domainPopOpen = !domainPopOpen">网站名单</button>
+                <div v-if="domainPopOpen" ref="domainPopBoxRef" class="domain-pop">
+                  <div class="domain-pop-head">
+                    <span>允许的网站</span>
+                    <button class="domain-pop-close" type="button" title="关闭" @click="domainPopOpen = false">×</button>
+                  </div>
+                  <input v-model="settings.browserAllowedDomains" type="text" placeholder="例如：example.com, bilibili.com" />
+                  <p class="domain-pop-hint">留空 = 所有 http/https 网站；多个域名用逗号分隔。</p>
+                </div>
+              </div>
+            </div>
 
-          <p v-if="settings.imageGenSkillEnabled" class="skill-hint" :class="{ warn: !settings.secondaryReady }">
-            <template v-if="settings.secondaryReady">
-              使用副模型的生图模型「{{ settings.secondaryImageModel }}」生成图片。
-            </template>
-            <template v-else>
-              尚未配置副模型 API，发送生图描述时会提示去配置；主对话不受影响。
-            </template>
-          </p>
+            <div v-if="settings.browserSkillEnabled" class="skill-note" :class="{ warn: browserStatus === 'missing' }">
+              <span>
+                <template v-if="browserStatus === 'connected'">扩展已连接{{ browserVersion ? `（v${browserVersion}）` : '' }}，可以让 AI 打开链接并操作。</template>
+                <template v-else-if="browserStatus === 'checking'">正在检测扩展连接…</template>
+                <template v-else>未检测到扩展：下载并解压 zip，在 chrome://extensions 打开「开发者模式」→「加载已解压的扩展程序」，选择解压目录后刷新本页。</template>
+              </span>
+            </div>
+            <div v-if="settings.browserSkillEnabled" class="skill-note">
+              <span>截图需要视觉模型才能被 AI 看懂（主模型{{ visionStatusText }}，可在副模型 API 配置 glm-4.6v）；纯文本模型会改用页面正文。</span>
+            </div>
+            <div v-if="settings.browserSkillEnabled" class="skill-note warn">
+              <span>截图会发送给模型服务商；登录、支付、提交表单等敏感操作请人工确认。仅支持 Chrome / Edge。</span>
+            </div>
+
+            <div v-if="settings.workModeEnabled" class="skill-note">
+              <span>
+                <template v-if="wsStatus.mode === 'folder'">当前工作区：本机文件夹「{{ wsStatus.folderName }}」，AI 的读写都限定在这个文件夹内；到「工作区」面板可更换或改回内置工作区。</template>
+                <template v-else>当前使用浏览器内置工作区：文件保存在浏览器中，可在「工作区」面板查看、下载、导入或挂载本机文件夹。</template>
+              </span>
+            </div>
+            <div v-if="settings.workModeEnabled && wsStatus.mode === 'folder' && wsStatus.permission === 'prompt'" class="skill-note warn">
+              <span>文件夹授权在本会话已失效，<button class="inline-link" type="button" @click="reauthorizeFolder">点击重新授权</button>后即可继续读写。</span>
+            </div>
+            <div v-if="settings.workModeEnabled && !wsStatus.folderSupported" class="skill-note">
+              <span>当前浏览器不支持挂载本机文件夹（需 Chrome / Edge），将使用内置工作区。</span>
+            </div>
+            <div v-if="settings.workModeEnabled" class="skill-note warn">
+              <span>AI 可直接修改工作区内的文件；删除会移入 .xiyue-trash 回收目录。挂载重要项目文件夹前请先备份。</span>
+            </div>
+
+            <div v-if="settings.ocrSkillEnabled" class="skill-note" :class="{ warn: !settings.secondaryReady && visionStatus === 'text' }">
+              <span>
+                <template v-if="visionStatus === 'vision'">
+                  图片将优先交给主模型「{{ settings.model }}」读取。<template v-if="settings.secondaryReady">主模型无法识别或请求失败时，自动切换到副模型「{{ settings.secondaryModel }}」。</template>
+                </template>
+                <template v-else-if="settings.secondaryReady">
+                  主模型「{{ settings.model }}」{{ visionStatusText }}，图片将由副模型「{{ settings.secondaryModel }}」读取。<template v-if="visionStatus === 'unknown'">若主模型能处理图片，会优先使用主模型。</template>
+                </template>
+                <template v-else>
+                  未配置副模型，将使用主模型「{{ settings.model }}」（{{ visionStatusText }}）。可在 设置 → 模型设置 → 副模型 API 配置视觉模型。
+                </template>
+              </span>
+            </div>
+            <div v-if="settings.imageGenSkillEnabled" class="skill-note" :class="{ warn: !settings.secondaryReady }">
+              <span>
+                <template v-if="settings.secondaryReady">
+                  使用副模型的生图模型「{{ settings.secondaryImageModel }}」生成图片。
+                </template>
+                <template v-else>
+                  尚未配置副模型 API，发送生图描述时会提示去配置；主对话不受影响。
+                </template>
+              </span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -144,12 +224,66 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
 import { detectVisionSupport } from '../../services/ocr'
+import { pingBrowserExtension } from '../../services/browserAgent'
+import { getWorkspaceStatus, ensureWorkspacePermission } from '../../services/workspace'
 
 const settings = useSettingsStore()
 const visible = ref(false)
+const browserStatus = ref('unknown')
+const browserVersion = ref('')
+const wsStatus = ref({ mode: 'opfs', folderName: '', permission: null, folderSupported: false, opfsSupported: true })
+const domainPopOpen = ref(false)
+const domainPopRef = ref(null)
+const domainPopBoxRef = ref(null)
+
+const hasNotes = computed(() =>
+  settings.browserSkillEnabled || settings.workModeEnabled || settings.ocrSkillEnabled || settings.imageGenSkillEnabled
+)
+
+function onDocumentMousedown(e) {
+  if (!domainPopOpen.value) return
+  if (domainPopRef.value?.contains(e.target) || domainPopBoxRef.value?.contains(e.target)) return
+  domainPopOpen.value = false
+}
+
+onMounted(() => document.addEventListener('mousedown', onDocumentMousedown))
+onUnmounted(() => document.removeEventListener('mousedown', onDocumentMousedown))
+
+async function refreshWsStatus() {
+  wsStatus.value = await getWorkspaceStatus()
+}
+
+async function reauthorizeFolder() {
+  const result = await ensureWorkspacePermission()
+  if (result.ok) window.__ui?.showToast('文件夹已重新授权', 'success')
+  else window.__ui?.showToast(result.message || '授权失败', 'error', 4200)
+  await refreshWsStatus()
+}
+
+watch(() => settings.workModeEnabled, enabled => {
+  if (enabled) refreshWsStatus()
+})
+
+async function checkBrowserConnection() {
+  if (!settings.browserSkillEnabled) return
+  browserStatus.value = 'checking'
+  const result = await pingBrowserExtension(settings)
+  if (result.ok) {
+    browserStatus.value = 'connected'
+    browserVersion.value = result.version || ''
+  } else {
+    browserStatus.value = 'missing'
+    window.__ui?.showToast(result.message || '未检测到浏览器扩展', 'info', 4200)
+  }
+}
+
+watch(() => settings.browserSkillEnabled, enabled => {
+  if (enabled) checkBrowserConnection()
+  else browserStatus.value = 'unknown'
+})
 
 const visionStatus = computed(() =>
   detectVisionSupport(settings.model, settings.apiBase, settings.modelVisionMode)
@@ -160,7 +294,11 @@ const visionStatusText = computed(() => {
   return '视觉能力未确认，将根据接口返回判断'
 })
 
-function open() { visible.value = true }
+function open() {
+  visible.value = true
+  if (settings.browserSkillEnabled) checkBrowserConnection()
+  if (settings.workModeEnabled) refreshWsStatus()
+}
 function close() { visible.value = false }
 defineExpose({ open, close })
 </script>
@@ -359,13 +497,127 @@ defineExpose({ open, close })
   line-height: 1.5;
 }
 
-.skill-hint {
-  margin: 16px 4px 0;
+.skill-notes {
+  margin-top: 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-card);
+}
+.skill-notes > * + * {
+  border-top: 1px solid var(--border-color);
+}
+.skill-actions {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px;
+}
+.skill-note {
+  display: flex;
+  gap: 9px;
+  padding: 11px 14px;
   font-size: 12px;
   line-height: 1.7;
+  color: var(--text-secondary);
+}
+.skill-note::before {
+  content: '';
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  margin-top: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.skill-note.warn::before {
+  background: var(--danger);
+}
+.browser-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 14px;
+  border-radius: 9px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: border-color 0.2s, color 0.2s;
+}
+.browser-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.browser-btn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.domain-pop {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 12px;
+  z-index: 60;
+  width: min(300px, calc(100vw - 60px));
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-card);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+.domain-pop-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.domain-pop-close {
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+.domain-pop-close:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.domain-pop input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border-radius: 9px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+}
+.domain-pop input:focus {
+  border-color: var(--accent);
+}
+.domain-pop-hint {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.6;
   color: var(--text-muted);
 }
-.skill-hint.warn {
-  color: var(--danger);
+.inline-link {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: inherit;
+  font-family: inherit;
+  text-decoration: underline;
 }
 </style>

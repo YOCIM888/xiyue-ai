@@ -24,7 +24,7 @@
 
     <!-- 消息气泡（AI 和用户共用） -->
     <div class="message-bubble">
-      <div v-if="hasVersions" class="version-nav">
+      <div v-if="hasVersions && !isStreaming" class="version-nav">
         <button class="ver-btn" :disabled="activeVersion <= 0" title="上一版本" @click="chatStore.setVersion(message.id, activeVersion - 1)">
           <i class="fa-solid fa-chevron-left"></i>
         </button>
@@ -34,13 +34,14 @@
         </button>
       </div>
 
-      <div v-if="message.thinking" class="thinking-block">
+      <div v-if="liveThinking" class="thinking-block">
         <button class="thinking-toggle" @click="thinkOpen = !thinkOpen">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline :points="thinkOpen ? '6 15 12 9 18 15' : '9 18 15 12 9 6'"/></svg>
           思考过程
         </button>
         <div v-if="thinkOpen" class="thinking-content">
-          <MarkdownRenderer :content="message.thinking" symbol-style />
+          <MarkdownRenderer :content="liveThinking" symbol-style />
+          <span v-if="isStreaming && !liveContent" class="cursor-blink">▍</span>
         </div>
       </div>
 
@@ -65,19 +66,40 @@
         </div>
       </div>
 
-      <div v-else class="message-content">
-        <MarkdownRenderer :content="displayContent" :symbol-style="message.role === 'assistant'" />
-      </div>
+      <template v-else-if="isStreaming">
+        <MessageParts v-if="liveParts.length" class="message-content" :parts="liveParts" />
+        <div v-if="liveContent" class="message-content streaming-text">
+          <MarkdownRenderer :content="liveContent" symbol-style />
+          <span class="cursor-blink">▍</span>
+        </div>
+        <div v-else-if="!liveThinking && !liveParts.length" class="typing-indicator">
+          <span></span><span></span><span></span>
+        </div>
+      </template>
+
+      <MessageParts
+        v-else-if="message.role === 'assistant' && message.parts?.length"
+        class="message-content"
+        :parts="message.parts"
+      />
+
+      <template v-else>
+        <!-- 旧消息回退：没有分段数据时沿用聚合执行链 -->
+        <ToolTrace v-if="message.role === 'assistant' && message.toolTrace?.length" :trace="message.toolTrace" />
+        <div class="message-content">
+          <MarkdownRenderer :content="displayContent" :symbol-style="message.role === 'assistant'" />
+        </div>
+      </template>
 
       <!-- AI 生成的图片 -->
-      <div v-if="message.role === 'assistant' && message.images?.length" class="ai-images">
+      <div v-if="message.role === 'assistant' && message.images?.length && !isStreaming" class="ai-images">
         <div v-for="(img, i) in message.images" :key="i" class="ai-img-wrap">
           <img :src="img" class="ai-img" alt="AI 生成图片"
             loading="lazy" title="点击查看原图" @click="previewImage(img)" />
         </div>
       </div>
 
-      <div class="message-actions" v-if="message.role === 'assistant'">
+      <div class="message-actions" v-if="message.role === 'assistant' && !isStreaming">
         <button class="btn-action" @click="copyContent" title="复制">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
         </button>
@@ -135,6 +157,8 @@
 <script setup>
 import { ref, computed, nextTick } from 'vue'
 import MarkdownRenderer from '../common/MarkdownRenderer.vue'
+import MessageParts from './MessageParts.vue'
+import ToolTrace from './ToolTrace.vue'
 import { useSettingsStore } from '../../stores/settings'
 import { useChatStore } from '../../stores/chat'
 import { useAssetsStore } from '../../stores/assets'
@@ -162,6 +186,19 @@ const hasVersions = computed(() =>
   Array.isArray(props.message.versions) && props.message.versions.length > 1
 )
 const activeVersion = computed(() => Number(props.message.activeVersion) || 0)
+// 流式回复直接复用这条消息本身渲染，收尾时只更新字段，避免整块 DOM 重建
+const isStreaming = computed(() =>
+  !!props.message.streaming && chatStore.streamingMessageId === props.message.id
+)
+const liveThinking = computed(() =>
+  isStreaming.value ? chatStore.streamingThinking : props.message.thinking
+)
+const liveContent = computed(() =>
+  isStreaming.value ? chatStore.streamingContent : props.message.content
+)
+const liveParts = computed(() =>
+  isStreaming.value ? chatStore.streamingParts : (props.message.parts || [])
+)
 
 function startEdit() {
   editText.value = props.message.content || ''
@@ -344,6 +381,32 @@ function saveToAssets() {
 .user .message-bubble .message-content { color: #1e3a8a; }
 
 .message-content { line-height: 1.7; font-size: 14px; color: var(--text-primary); }
+.part-text + .part-text { margin-top: 10px; }
+
+/* 流式光标与等待指示 */
+.cursor-blink {
+  animation: blink 1s step-end infinite;
+  color: var(--accent);
+  font-weight: bold;
+}
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+.typing-indicator { display: flex; gap: 5px; padding: 8px 0; }
+.typing-indicator span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  animation: typing-bounce 1.4s infinite ease-in-out both;
+}
+.typing-indicator span:nth-child(1) { animation-delay: -0.32s; }
+.typing-indicator span:nth-child(2) { animation-delay: -0.16s; }
+@keyframes typing-bounce {
+  0%, 80%, 100% { transform: scale(0); }
+  40% { transform: scale(1); }
+}
 
 .message-actions { display: flex; gap: 2px; margin-top: 6px; opacity: 0; transition: opacity 0.2s; }
 .message-item:hover .message-actions { opacity: 1; }

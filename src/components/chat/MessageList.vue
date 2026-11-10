@@ -35,49 +35,13 @@
         </div>
       </div>
 
-      <!-- 流式生成中的临时消息 -->
-      <div v-if="streamingContent || streamingThinking" class="message assistant">
-        <div v-if="!settings.hideAiAvatar" class="message-avatar">
-          <img src="/xiyue.png" class="avatar-img" alt="AI" />
-        </div>
-        <div class="message-bubble">
-          <!-- 思考链 -->
-          <div v-if="streamingThinking" class="thinking-block">
-            <button class="thinking-toggle" @click="thinkOpen = !thinkOpen">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline :points="thinkOpen ? '6 15 12 9 18 15' : '9 18 15 12 9 6'"/></svg>
-              思考过程
-            </button>
-            <div v-if="thinkOpen" class="thinking-content">
-              <MarkdownRenderer :content="streamingThinking" symbol-style />
-              <span class="cursor-blink" v-if="!streamingContent">▍</span>
-            </div>
-          </div>
-          <!-- 正式回复 -->
-          <div v-if="streamingContent">
-            <MarkdownRenderer :content="streamingContent" symbol-style />
-            <span class="cursor-blink">▍</span>
-          </div>
-        </div>
       </div>
-      <!-- 加载中但还没内容 -->
-      <div v-if="isLoading && !streamingContent && !streamingThinking" class="message assistant">
-        <div v-if="!settings.hideAiAvatar" class="message-avatar">
-          <img src="/xiyue.png" class="avatar-img" alt="AI" />
-        </div>
-        <div class="message-bubble">
-          <div class="typing-indicator">
-            <span></span><span></span><span></span>
-          </div>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
 <script setup>
 import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import MessageItem from './MessageItem.vue'
-import MarkdownRenderer from '../common/MarkdownRenderer.vue'
 import { useSettingsStore } from '../../stores/settings'
 
 const settings = useSettingsStore()
@@ -86,6 +50,7 @@ const props = defineProps({
   messages: { type: Array, default: () => [] },
   streamingContent: { type: String, default: '' },
   streamingThinking: { type: String, default: '' },
+  streamingParts: { type: Array, default: () => [] },
   isLoading: { type: Boolean, default: false },
   searching: { type: Boolean, default: false },
   imageGenerating: { type: Boolean, default: false },
@@ -95,7 +60,6 @@ const props = defineProps({
 const emit = defineEmits(['away-from-bottom'])
 
 const listRef = ref(null)
-const thinkOpen = ref(true)
 
 function scrollToBottom() {
   nextTick(() => {
@@ -142,6 +106,7 @@ onUnmounted(() => {
 watch(() => props.messages.length, scrollToBottom)
 watch(() => props.streamingContent, scrollToBottom)
 watch(() => props.streamingThinking, scrollToBottom)
+watch(() => props.streamingParts, scrollToBottom, { deep: true })
 watch(() => props.searching, scrollToBottom)
 watch(() => props.imageGenerating, scrollToBottom)
 watch(() => props.isLoading, scrollToBottom, { immediate: true })
@@ -198,16 +163,6 @@ defineExpose({ scrollToBottom, scrollToTop, scrollToMessage })
   color: var(--text-primary);
 }
 
-.cursor-blink {
-  animation: blink 1s step-end infinite;
-  color: var(--accent);
-  font-weight: bold;
-}
-@keyframes blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
-}
-
 /* 联网搜索提示 */
 .searching-line {
   display: flex;
@@ -232,25 +187,6 @@ defineExpose({ scrollToBottom, scrollToTop, scrollToMessage })
   40% { opacity: 1; transform: translateY(-3px); }
 }
 
-.typing-indicator {
-  display: flex;
-  gap: 5px;
-  padding: 8px 0;
-}
-.typing-indicator span {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--text-muted);
-  animation: bounce 1.4s infinite ease-in-out both;
-}
-.typing-indicator span:nth-child(1) { animation-delay: -0.32s; }
-.typing-indicator span:nth-child(2) { animation-delay: -0.16s; }
-@keyframes bounce {
-  0%, 80%, 100% { transform: scale(0); }
-  40% { transform: scale(1); }
-}
-
 /* 移动端 */
 @media (max-width: 768px) {
   .messages-container {
@@ -261,37 +197,4 @@ defineExpose({ scrollToBottom, scrollToTop, scrollToMessage })
   }
 }
 
-/* 思考链区块 */
-.thinking-block {
-  margin-bottom: 12px;
-  border: 1px solid var(--border-color);
-  border-radius: 10px;
-  overflow: hidden;
-}
-.thinking-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  padding: 8px 14px;
-  border: none;
-  background: var(--bg-sidebar);
-  color: var(--text-secondary);
-  font-size: 12px;
-  cursor: pointer;
-  font-family: inherit;
-  transition: background 0.15s;
-}
-.thinking-toggle:hover {
-  background: var(--bg-hover);
-}
-.thinking-content {
-  padding: 10px 14px;
-  font-size: 13px;
-  color: var(--text-muted);
-  line-height: 1.7;
-  border-top: 1px solid var(--border-color);
-  max-height: 400px;
-  overflow-y: auto;
-}
 </style>

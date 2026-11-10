@@ -63,7 +63,7 @@ import { computed, ref } from 'vue'
 import StarryAvatar from './StarryAvatar.vue'
 import { useStarryStore } from '../../stores/starry'
 
-const props = defineProps({
+defineProps({
   friends: { type: Array, default: () => [] },
 })
 const emit = defineEmits(['created', 'saved'])

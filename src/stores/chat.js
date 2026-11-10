@@ -34,7 +34,8 @@ import {
   cloneMessagesForFork,
 } from '../utils/conversation'
 import { buildMainChatMemoryContext } from '../utils/memoryContext'
-import { buildToolPrompt, extractToolCalls, executeToolCall, stripToolBlocks } from '../services/tools'
+import { buildToolPrompt, extractToolCalls, executeToolCall, stripToolBlocks, stripStreamingToolBlocks, createWriteBudget } from '../services/tools'
+import { beginWorkspaceTask } from '../services/workspaceActivity'
 import { exportConversation, printConversation } from '../services/conversationExport'
 // 系统提示词文件（Vite 构建时内联，零延迟）
 import systemPromptRaw from '../../public/prompt/system.md?raw'
@@ -44,6 +45,10 @@ export const useChatStore = defineStore('chat', () => {
   const activeBranchId = ref('b-main')
   const streamingContent = ref('')
   const streamingThinking = ref('')
+  // 分段渲染：文字段落与内联工具卡片按顺序排列，调用工具时消息内容留在原位
+  const streamingParts = ref([])
+  // 流式回复已经在消息列表里占位，收尾时只更新字段，避免整条消息重建
+  const streamingMessageId = ref(null)
   const isLoading = ref(false)
   const searching = ref(false)
   const imageGenerating = ref(false)
@@ -163,9 +168,12 @@ export const useChatStore = defineStore('chat', () => {
     isLoading.value = true
     streamingContent.value = ''
     streamingThinking.value = ''
+    streamingParts.value = []
+    beginWorkspaceTask()
 
     let fullContent = ''
     let fullThinking = ''
+    const parts = []
     const usageList = []
     let imageNotice = ''
     let attemptedModel = useSecondary ? settings.secondaryModel : settings.model
@@ -187,9 +195,15 @@ export const useChatStore = defineStore('chat', () => {
       }
 
       const systemPrompt = buildSystemPrompt()
+      const historyForApi = historyForRequest.map(m => ({
+        role: m.role,
+        content: m.content,
+        // 只回传用户上传的图片；助手侧截图/生图仅用于展示，避免后续轮次重复占用上下文
+        images: m.role === 'user' ? m.images : undefined,
+      }))
       const chatMessages = systemPrompt
-        ? [{ role: 'system', content: systemPrompt }, ...historyForRequest.map(m => ({ role: m.role, content: m.content, images: m.images }))]
-        : historyForRequest.map(m => ({ role: m.role, content: m.content, images: m.images }))
+        ? [{ role: 'system', content: systemPrompt }, ...historyForApi]
+        : historyForApi
 
       let apiMessages = chatMessages
       if (settings.linkSkillEnabled && linkText) {
@@ -231,6 +245,7 @@ export const useChatStore = defineStore('chat', () => {
           contextLength: settings.contextLength,
           topP: settings.topP,
           thinkingEnabled: settings.thinkingEnabled,
+          reasoningEffort: settings.reasoningEffort,
           messages,
           signal: controller.signal,
           onChunk: ({ type, text }) => {
@@ -239,7 +254,7 @@ export const useChatStore = defineStore('chat', () => {
               streamingThinking.value = fullThinking
             } else {
               fullContent += text
-              streamingContent.value = fullContent
+              streamingContent.value = stripStreamingToolBlocks(fullContent)
             }
           },
         })
@@ -282,81 +297,160 @@ export const useChatStore = defineStore('chat', () => {
       }
 
       // 工具调用循环：模型显式选择搜索、读文档、计算、画图、生图、导出
-      const toolRecords = []
       const chartOptions = []
       const toolImages = []
+      let latestBrowserShot = null
       let pendingExport = null
       let toolMessages = apiMessages
       let toolRounds = 0
-      const MAX_TOOL_ROUNDS = 3
+      let toolImagesRejected = false
+      const MAX_TOOL_ROUNDS = settings.workModeEnabled ? 20 : settings.browserSkillEnabled ? 8 : 3
+      const toolCallLimit = Math.max(1, Math.min(200, Number(settings.maxToolCallsPerRound) || 10))
+      const writeBudget = createWriteBudget()
 
       while (toolRounds < MAX_TOOL_ROUNDS) {
-        const calls = extractToolCalls(fullContent)
+        const calls = extractToolCalls(fullContent, toolCallLimit)
         if (!calls.length) break
         toolRounds += 1
         const isLastRound = toolRounds >= MAX_TOOL_ROUNDS
-        streamingContent.value = `${fullContent}\n\n> 正在执行工具（${calls.length}）…`
+        const previousContent = fullContent
+        const previousThinking = fullThinking
+
+        // 本轮文字就地保留，工具卡片紧跟其后；清空的只有正在流式的临时区
+        const visibleText = stripToolBlocks(previousContent).trim()
+        if (visibleText) {
+          parts.push({ type: 'text', content: visibleText })
+        }
+        const roundPart = {
+          type: 'trace',
+          round: toolRounds,
+          running: true,
+          status: `正在执行工具（${calls.length}）…`,
+          thinking: previousThinking.trim(),
+          steps: [],
+          notes: [],
+        }
+        parts.push(roundPart)
+        streamingParts.value = parts.slice()
+        streamingContent.value = ''
+        streamingThinking.value = ''
 
         const results = []
-        for (const call of calls) {
+        for (let index = 0; index < calls.length; index += 1) {
+          const call = calls[index]
           if (controller.signal.aborted) break
+          roundPart.status = `正在执行 ${call.tool}（${index + 1}/${calls.length}）…`
+          streamingParts.value = parts.slice()
           let result
           try {
             result = await executeToolCall(call, {
               settings,
               signal: controller.signal,
               documentIds,
+              budget: writeBudget,
               onStatus: text => {
-                if (text) streamingContent.value = `${fullContent}\n\n> ${text}`
+                if (text) {
+                  roundPart.status = text
+                  streamingParts.value = parts.slice()
+                }
               },
             })
           } catch (err) {
             result = { ok: false, text: err?.message || String(err), record: `工具执行失败：${err?.message || err}` }
           }
           results.push({ call, result })
-          if (result.record) toolRecords.push(result.record)
+          roundPart.steps.push({
+            tool: call.tool,
+            ok: !!result.ok,
+            summary: String(result.record || (result.ok ? '完成' : result.text) || '').slice(0, 300),
+            output: String(result.text || '').slice(0, 1200),
+          })
           if (result.chartOption) chartOptions.push(result.chartOption)
-          if (Array.isArray(result.images)) toolImages.push(...result.images)
+          if (Array.isArray(result.images)) {
+            if (call.tool === 'browser') latestBrowserShot = result.images[0] || latestBrowserShot
+            else toolImages.push(...result.images)
+          }
           if (result.exportFormat) pendingExport = result.exportFormat
+          streamingParts.value = parts.slice()
         }
+        roundPart.running = false
+        delete roundPart.status
+        streamingParts.value = parts.slice()
 
         if (controller.signal.aborted) {
           throw Object.assign(new Error('Aborted'), { name: 'AbortError' })
         }
 
-        const resultsText = results
+        let resultsText = results
           .map(({ call, result }) => `工具：${call.tool}\n状态：${result.ok ? '成功' : '失败'}\n${String(result.text || '').slice(0, 8000)}`)
           .join('\n\n')
-        const previousContent = fullContent
-        const previousThinking = fullThinking
+
+        const visionImages = results
+          .filter(({ call }) => call.tool === 'browser')
+          .flatMap(({ result }) => result.visionImages || [])
+          .slice(-2)
+        const activeModel = attemptedSecondary ? settings.secondaryModel : settings.model
+        const activeBase = attemptedSecondary ? settings.secondaryApiBase : settings.apiBase
+        const modelSeesImages = detectVisionSupport(activeModel, activeBase, settings.modelVisionMode) !== 'text'
+        const imagesForModel = modelSeesImages && !toolImagesRejected ? visionImages : []
+        if (visionImages.length && !modelSeesImages) {
+          resultsText += '\n\n（当前模型不支持查看截图，请依据页面正文和元素列表继续操作。）'
+        }
+
         toolMessages = [
-          ...toolMessages,
+          ...toolMessages.map(message =>
+            message.toolResult && message.images ? { ...message, images: undefined } : message
+          ),
           { role: 'assistant', content: previousContent },
           {
             role: 'user',
             content: `【工具执行结果】\n${resultsText}\n\n请基于以上真实结果继续回答。不要编造结果，也不要重复调用已经成功的工具。${
               isLastRound ? '这是最后一轮，请直接给出最终回答，不要再调用工具。' : '如仍需其他工具，可以继续调用。'
             }`,
+            images: imagesForModel.length ? imagesForModel : undefined,
+            toolResult: true,
           },
         ]
 
+        let requestError = null
         try {
           await (attemptedSecondary ? askSecondary : askMain)(toolMessages)
         } catch (err) {
+          requestError = err
+        }
+        // 模型能力未知且服务端拒绝图片时，退回纯文本结果重试一次
+        if (requestError && imagesForModel.length && isVisionUnsupportedError(requestError?.message || '')) {
+          roundPart.notes.push('当前模型不支持截图，已改用页面文本继续')
+          streamingParts.value = parts.slice()
+          toolImagesRejected = true
+          const textOnlyMessages = toolMessages.map((message, index) =>
+            index === toolMessages.length - 1 ? { ...message, images: undefined } : message
+          )
+          toolMessages = textOnlyMessages
           fullContent = previousContent
           fullThinking = previousThinking
-          streamingContent.value = previousContent
-          toolRecords.push(
-            err?.name === 'AbortError'
-              ? '最终回答已中止，以上为工具执行与原始回答'
-              : `最终回答生成失败：${err?.message || err}`
-          )
+          try {
+            await (attemptedSecondary ? askSecondary : askMain)(textOnlyMessages)
+            requestError = null
+          } catch (err) {
+            requestError = err
+          }
+        }
+        if (requestError) {
+          fullContent = stripToolBlocks(previousContent).trim()
+          fullThinking = previousThinking
+          streamingContent.value = ''
+          const note = requestError?.name === 'AbortError'
+            ? '最终回答已中止，以上为工具执行与原始回答'
+            : `最终回答生成失败：${requestError?.message || requestError}`
+          roundPart.notes.push(note)
+          streamingParts.value = parts.slice()
           break
         }
       }
 
       // 达到轮次上限后仍有工具调用：移除未执行的代码块，避免把 JSON 展示给用户
-      if (extractToolCalls(fullContent).length) {
+      if (extractToolCalls(fullContent, toolCallLimit).length) {
         fullContent = stripToolBlocks(fullContent)
         if (fullContent) fullContent += '\n\n（已达到工具调用上限，以上为当前结果。）'
       }
@@ -370,31 +464,56 @@ export const useChatStore = defineStore('chat', () => {
       for (const option of chartOptions.slice(0, 2)) {
         content += `\n\n\`\`\`echarts\n${JSON.stringify(option)}\n\`\`\``
       }
-      if (toolRecords.length) {
-        content += `\n\n---\n**工具调用记录**\n\`\`\`\`\n${toolRecords.join('\n\n').slice(0, 6000)}\n\`\`\`\``
+      // 最终正文作为最后一个文字段落；与上一段重合时就地补充，避免重复展示
+      if (String(content).trim()) {
+        const lastText = [...parts].reverse().find(part => part.type === 'text')
+        if (lastText && String(content).trim().startsWith(lastText.content)) {
+          lastText.content = String(content).trim()
+        } else {
+          parts.push({ type: 'text', content: String(content).trim() })
+        }
       }
       const finalUsage = usageList.length
         ? sumUsage(usageList, attemptedModel)
         : buildEstimatedUsage(apiMessages, fullContent, attemptedModel)
       if (usageList.length) usageList.forEach(u => recordUsage(u))
       else recordUsage(finalUsage)
+      const finalImages = latestBrowserShot ? [...toolImages, latestBrowserShot] : toolImages
       return {
         content,
         thinking: fullThinking || undefined,
+        parts: parts.length ? parts : undefined,
         usage: finalUsage,
-        images: toolImages.length ? toolImages.slice(0, 4) : undefined,
+        images: finalImages.length ? finalImages.slice(-4) : undefined,
         pendingExport,
       }
     } catch (err) {
       if (err.name === 'AbortError') {
-        if (fullContent || fullThinking) {
+        if (fullContent || fullThinking || parts.length) {
           const finalUsage = usageList.length
             ? sumUsage(usageList, attemptedModel)
             : buildEstimatedUsage(history, fullContent, attemptedModel)
           if (usageList.length) usageList.forEach(u => recordUsage(u))
           else recordUsage(finalUsage)
-          const partial = stripToolBlocks(fullContent) || fullContent
-          return { content: `${partial}\n\n*[已中止]*`, thinking: fullThinking || undefined, usage: finalUsage }
+          for (const part of parts) {
+            if (part.type === 'trace' && part.running) {
+              part.running = false
+              delete part.status
+              part.notes.push('已中止')
+            }
+          }
+          const partial = fullContent ? stripToolBlocks(fullContent).trim() : ''
+          const text = partial ? `${partial}\n\n*[已中止]*` : '*[已中止]*'
+          const lastText = [...parts].reverse().find(part => part.type === 'text')
+          if (lastText && partial && text.startsWith(lastText.content)) lastText.content = text
+          else parts.push({ type: 'text', content: text })
+          streamingParts.value = parts.slice()
+          return {
+            content: text,
+            thinking: fullThinking || undefined,
+            parts: parts.length ? parts : undefined,
+            usage: finalUsage,
+          }
         }
         return null
       }
@@ -426,8 +545,43 @@ export const useChatStore = defineStore('chat', () => {
       isLoading.value = false
       streamingContent.value = ''
       streamingThinking.value = ''
+      streamingParts.value = []
       abortController.value = null
     }
+  }
+
+  // 生成期间先在消息列表里放一条占位消息，后续流式内容都渲染在同一个组件实例上
+  function createStreamingPlaceholder(branch) {
+    const msg = {
+      id: newMessageId(),
+      role: 'assistant',
+      content: '',
+      parts: [],
+      streaming: true,
+      ts: Date.now(),
+    }
+    branch.messages.push(msg)
+    streamingMessageId.value = msg.id
+    return msg
+  }
+
+  function finishStreamingPlaceholder(branch, msg, reply, prefix = '') {
+    if (!msg) return
+    msg.thinking = reply.thinking
+    msg.parts = reply.parts ? (prefix ? [{ type: 'text', content: prefix }, ...reply.parts] : reply.parts) : undefined
+    msg.content = prefix ? `${prefix}\n\n${reply.content}` : reply.content
+    msg.images = reply.images
+    msg.usage = reply.usage
+    delete msg.streaming
+    if (streamingMessageId.value === msg.id) streamingMessageId.value = null
+    if (branch && !branch.messages.includes(msg)) branch.messages.push(msg)
+  }
+
+  function dropStreamingPlaceholder(branch, msg) {
+    if (!msg) return
+    const idx = branch?.messages.indexOf(msg) ?? -1
+    if (idx !== -1) branch.messages.splice(idx, 1)
+    if (streamingMessageId.value === msg.id) streamingMessageId.value = null
   }
 
   async function sendMessage(userContent, images = [], documentIds = [], options = {}) {
@@ -474,7 +628,7 @@ export const useChatStore = defineStore('chat', () => {
         branch.messages.push({
           id: newMessageId(),
           role: 'assistant',
-          content: '❌ 生图需要副模型 API，目前尚未配置。\n\n请在「设置 → 模型设置 → 副模型 API」填写 Base URL、API Key 与模型名（智谱可用 glm-4.6v 系列），并选择生图模型（如 glm-image）。主对话不受影响。',
+          content: '❌ 生图需要副模型 API，目前尚未配置。\n\n请在「设置 → 模型设置 → 副模型 API」填写 Base URL、API Key、模型名与生图模型（支持任意 OpenAI 兼容服务，如智谱 glm-image）。主对话不受影响。',
           ts: Date.now(),
         })
         saveMessages(topicId)
@@ -552,21 +706,18 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     const history = branch.messages.slice()
+    const streamMsg = createStreamingPlaceholder(branch)
     const reply = await generateReply(history, userContent, documentIds, searchBlock)
-    if (!reply) return
+    if (!reply) {
+      dropStreamingPlaceholder(branch, streamMsg)
+      return
+    }
 
-    branch.messages.push({
-      id: newMessageId(),
-      role: 'assistant',
-      thinking: reply.thinking,
-      // 多行提示逐行加引用前缀，避免 Markdown 结构断裂
-      content: searchNotice
-        ? `> ${String(searchNotice).trim().split('\n').join('\n> ')}\n\n${reply.content}`
-        : reply.content,
-      images: reply.images,
-      usage: reply.usage,
-      ts: Date.now(),
-    })
+    const prefix = searchNotice
+      ? `> ${String(searchNotice).trim().split('\n').join('\n> ')}`
+      : ''
+    // 多行提示逐行加引用前缀，避免 Markdown 结构断裂
+    finishStreamingPlaceholder(branch, streamMsg, reply, prefix)
     saveMessages(topicId)
     topics.touchTopic(topicId)
 
@@ -654,27 +805,24 @@ export const useChatStore = defineStore('chat', () => {
   async function editAndRegenerate(messageId, newContent) {
     const content = String(newContent ?? '').trim()
     if (!content) return
-    const { topics, topicId, branch } = ensureConversation()
+    const { topics, branch } = ensureConversation()
     const idx = branch.messages.findIndex(m => m.id === messageId)
     if (idx === -1 || branch.messages[idx].role !== 'user') return
 
     const fork = forkAt(messageId, content)
     if (!fork) return
 
-    const reply = await generateReply(fork.branch.messages.slice(), content)
-    if (reply) {
-      fork.branch.messages.push({
-        id: newMessageId(),
-        role: 'assistant',
-        thinking: reply.thinking,
-        content: reply.content,
-        images: reply.images,
-        ts: Date.now(),
-      })
-      saveMessages(fork.topicId)
-      topics.touchTopic(fork.topicId)
-      handlePendingExport(reply, fork.branch, topics)
+    const forkHistory = fork.branch.messages.slice()
+    const streamMsg = createStreamingPlaceholder(fork.branch)
+    const reply = await generateReply(forkHistory, content)
+    if (!reply) {
+      dropStreamingPlaceholder(fork.branch, streamMsg)
+      return
     }
+    finishStreamingPlaceholder(fork.branch, streamMsg, reply)
+    saveMessages(fork.topicId)
+    topics.touchTopic(fork.topicId)
+    handlePendingExport(reply, fork.branch, topics)
     window.__ui?.showToast(`已编辑并生成「${fork.branch.name}」，原对话保留`, 'success')
   }
 
@@ -682,17 +830,30 @@ export const useChatStore = defineStore('chat', () => {
     const idx = branch.messages.indexOf(msg)
     if (idx === -1 || msg.role !== 'assistant') return
 
-    const reply = await generateReply(branch.messages.slice(0, idx), undefined, [], '', options)
-    if (!reply) return
+    const history = branch.messages.slice(0, idx)
+    // 原消息就地进入流式状态，重新生成的过渡不再移除/重建气泡
+    msg.streaming = true
+    streamingMessageId.value = msg.id
+    const reply = await generateReply(history, undefined, [], '', options)
+    if (!reply) {
+      delete msg.streaming
+      if (streamingMessageId.value === msg.id) streamingMessageId.value = null
+      return
+    }
 
     const versions = Array.isArray(msg.versions) && msg.versions.length
       ? msg.versions.slice()
-      : [{ content: msg.content, thinking: msg.thinking, ts: msg.ts || Date.now() }]
-    versions.push({ content: reply.content, thinking: reply.thinking, ts: Date.now() })
+      : [{ content: msg.content, thinking: msg.thinking, toolTrace: msg.toolTrace, parts: msg.parts, ts: msg.ts || Date.now() }]
+    versions.push({ content: reply.content, thinking: reply.thinking, parts: reply.parts, ts: Date.now() })
     msg.versions = versions
     msg.activeVersion = versions.length - 1
     msg.content = reply.content
     msg.thinking = reply.thinking
+    msg.parts = reply.parts
+    delete msg.streaming
+    if (streamingMessageId.value === msg.id) streamingMessageId.value = null
+    // 旧版工具链字段已被 parts 取代，避免旧数据残留显示
+    delete msg.toolTrace
     if (reply.images?.length) msg.images = reply.images
 
     saveMessages(topicId)
@@ -745,6 +906,8 @@ export const useChatStore = defineStore('chat', () => {
     msg.activeVersion = idx
     msg.content = v.content
     msg.thinking = v.thinking
+    msg.toolTrace = v.toolTrace
+    msg.parts = v.parts
     saveMessages(topicId)
   }
 
@@ -760,21 +923,18 @@ export const useChatStore = defineStore('chat', () => {
       return
     }
 
-    const reply = await generateReply([
+    const history = [
       ...branch.messages,
       { role: 'user', content: '请继续。' },
-    ])
-    if (!reply) return
+    ]
+    const streamMsg = createStreamingPlaceholder(branch)
+    const reply = await generateReply(history)
+    if (!reply) {
+      dropStreamingPlaceholder(branch, streamMsg)
+      return
+    }
 
-    branch.messages.push({
-      id: newMessageId(),
-      role: 'assistant',
-      thinking: reply.thinking,
-      content: reply.content,
-      images: reply.images,
-      usage: reply.usage,
-      ts: Date.now(),
-    })
+    finishStreamingPlaceholder(branch, streamMsg, reply)
     saveMessages(topicId)
     topics.touchTopic(topicId)
     handlePendingExport(reply, branch, topics)
@@ -922,7 +1082,7 @@ export const useChatStore = defineStore('chat', () => {
 
   return {
     conversation, branches, activeBranchId, activeBranch, messages,
-    streamingContent, streamingThinking, isLoading, searching, imageGenerating,
+    streamingContent, streamingThinking, streamingParts, streamingMessageId, isLoading, searching, imageGenerating,
     loadMessages, saveMessages, sendMessage, stopGeneration, clearMessages,
     regenerate, regenerateWithSecondary, setVersion, branchFromMessage, editAndRegenerate, switchBranch,
     continueResponse, deleteMessage, buildSystemPrompt,

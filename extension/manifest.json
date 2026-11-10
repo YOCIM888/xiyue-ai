@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "XIYUE 浏览器控制",
+  "version": "1.0.0",
+  "description": "让 XIYUE AI 打开网页、读取内容、点击、填写并截图。",
+  "minimum_chrome_version": "110",
+  "permissions": ["tabs", "scripting", "activeTab", "windows", "storage"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "externally_connectable": {
+    "matches": [
+      "https://yocim.top/*",
+      "https://*.yocim.top/*",
+      "http://localhost/*",
+      "http://127.0.0.1/*"
+    ]
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA3KdsKkdBoZdmNTYqDhh9m3S5BKtvPYnYlly0SE7/jeAqQi4LUbw5/k2ygFmh0zsbCXjH/hP+lSn2eT/Rlx9c159MDaQIqHJ6Jkd+zxAZeqk9dvD4ePN9e7oKFS5innJR5pogtzRE4vfCFnVU2hMpKBBlXWFeVxlVcP6/HQyHhOLyPHXv8TQtK44E8rJQa52uneIoFhxwegPqaYZHIuDMOOG9loXB/INGQ9JdgnLu+w49otyCgOa0pjD99tkAL5Pxz+Prnkr/87x3n12qQuZI/0Up1/BpK1c3MzbphEZ6JYB1dIHMvlDlhHmTo9bK41u/k9xMeSEO31df5GKtq0gT3wIDAQAB"
+}

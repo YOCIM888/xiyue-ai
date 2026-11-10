@@ -1,6 +1,6 @@
 /**
- * AI 生图：走副模型 API（智谱 images/generations，OpenAI 风格返回 data[].url）。
- * 需要用户在「设置 → 模型设置 → 副模型 API」中配置 Base URL、API Key 与生图模型。
+ * AI 生图：走副模型 API，按 OpenAI 风格调用 {Base URL}/images/generations（智谱、OpenAI 等），
+ * 返回 data[].url 或 data[].b64_json。可在「设置 → 模型设置 → 副模型 API」中配置任意兼容服务。
  */
 
 const TIMEOUT_MS = 60000

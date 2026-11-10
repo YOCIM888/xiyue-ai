@@ -13,6 +13,7 @@ export async function sendChatRequest({
   signal,
   onChunk,
   thinkingEnabled,
+  reasoningEffort,
 }) {
   const isOllama = apiBase.includes('/ollama')
 
@@ -35,11 +36,11 @@ export async function sendChatRequest({
   if (isOllama) {
     return ollamaChat({ apiBase, model, temperature, maxTokens, contextLength, topP, messages: apiMessages, signal, onChunk, thinkingEnabled })
   }
-  return openaiChat({ apiBase, apiKey, model, temperature, maxTokens, topP, messages: apiMessages, signal, onChunk, thinkingEnabled })
+  return openaiChat({ apiBase, apiKey, model, temperature, maxTokens, topP, messages: apiMessages, signal, onChunk, thinkingEnabled, reasoningEffort })
 }
 
 /** OpenAI 兼容格式 (SSE) */
-async function openaiChat({ apiBase, apiKey, model, temperature, maxTokens, topP, messages, signal, onChunk, thinkingEnabled }) {
+async function openaiChat({ apiBase, apiKey, model, temperature, maxTokens, topP, messages, signal, onChunk, thinkingEnabled, reasoningEffort }) {
   const url = chatCompletionsUrl(apiBase)
   const isBigModel = /open\.bigmodel\.cn|api\.z\.ai/i.test(String(apiBase || ''))
   // 智谱参数范围与 OpenAI 不同：temperature 0~1，max_tokens 上限 128K
@@ -60,19 +61,27 @@ async function openaiChat({ apiBase, apiKey, model, temperature, maxTokens, topP
   }
   if (model.startsWith('deepseek') || apiBase.includes('deepseek')) {
     body.thinking = { type: thinkingEnabled ? 'enabled' : 'disabled' }
+  } else if (thinkingEnabled && reasoningEffort && reasoningEffort !== 'default') {
+    body.reasoning_effort = reasoningEffort
   }
   const headers = { 'Content-Type': 'application/json' }
   if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
 
   const send = () => fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal })
   let resp = await send()
-  // 少数中转服务不认识 stream_options，去掉后重试一次，避免整个请求失败
+  // 少数中转服务不认识 stream_options / reasoning_effort，去掉后重试一次，避免整个请求失败
   if (!resp.ok && resp.status === 400) {
     const detail = await resp.clone().text().catch(() => '')
-    if (/stream_options/i.test(detail)) {
+    let retried = false
+    if (/stream_options/i.test(detail) && 'stream_options' in body) {
       delete body.stream_options
-      resp = await send()
+      retried = true
     }
+    if (/reasoning_effort/i.test(detail) && 'reasoning_effort' in body) {
+      delete body.reasoning_effort
+      retried = true
+    }
+    if (retried) resp = await send()
   }
   if (!resp.ok) throw new Error(await errFromResp(resp))
 
@@ -112,7 +121,7 @@ async function openaiChat({ apiBase, apiKey, model, temperature, maxTokens, topP
 }
 
 /** Ollama 原生格式 (NDJSON) */
-async function ollamaChat({ apiBase, model, temperature, maxTokens, contextLength, topP, messages, signal, onChunk, thinkingEnabled }) {
+async function ollamaChat({ model, temperature, maxTokens, contextLength, topP, messages, signal, onChunk, thinkingEnabled }) {
   if (location.protocol === 'https:' && location.hostname !== 'localhost') {
     throw new Error('当前为 HTTPS 远程部署，无法访问本地 Ollama。请使用云端 API 模型。')
   }

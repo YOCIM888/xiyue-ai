@@ -8,6 +8,7 @@
     <SettingsPanel ref="settingsPanel" />
     <AssetPanel ref="assetPanel" />
     <SkillPanel ref="skillPanel" />
+    <WorkspacePanel ref="workspacePanel" />
     <MemoryPanel ref="memoryPanel" />
     <UIModal />
   </div>
@@ -21,9 +22,9 @@ import TopBar from './components/layout/TopBar.vue'
 import SettingsPanel from './components/settings/SettingsPanel.vue'
 import AssetPanel from './components/assets/AssetPanel.vue'
 import SkillPanel from './components/skills/SkillPanel.vue'
+import WorkspacePanel from './components/workspace/WorkspacePanel.vue'
 import MemoryPanel from './components/memory/MemoryPanel.vue'
 import UIModal from './components/common/UIModal.vue'
-import { loadSystemPrompt } from './utils/storage'
 import { useSettingsStore } from './stores/settings'
 
 const settings = useSettingsStore()
@@ -40,9 +41,11 @@ watchEffect(() => {
 const settingsPanel = ref(null)
 const assetPanel = ref(null)
 const skillPanel = ref(null)
+const workspacePanel = ref(null)
 const memoryPanel = ref(null)
 provide('assetPanel', assetPanel)
 provide('skillPanel', skillPanel)
+provide('workspacePanel', workspacePanel)
 provide('memoryPanel', memoryPanel)
 
 function openSettings(section) {
@@ -63,12 +66,18 @@ onMounted(async () => {
 
 <style scoped>
 .app-container {
+  --topbar-h: 60px;
   display: flex;
   height: 100dvh;
   height: 100vh;
   width: 100vw;
   overflow: hidden;
   background: var(--bg-primary);
+}
+@media (max-width: 768px) {
+  .app-container {
+    --topbar-h: 56px;
+  }
 }
 .main-area {
   flex: 1;

@@ -3,6 +3,14 @@
     <div v-if="isMobile && open" class="sidebar-backdrop" @click="open = false"></div>
 
     <aside class="sidebar" @touchstart="onSidebarTouchStart" @touchend="onSidebarTouchEnd">
+      <!-- 顶部搜索入口 -->
+      <div class="sidebar-search">
+        <button class="search-entry" @click="searchOpen = true" title="搜索全部会话的消息正文">
+          <i class="fa-solid fa-magnifying-glass"></i>
+          <span>搜索历史对话</span>
+        </button>
+      </div>
+
       <!-- 快捷入口 -->
       <div class="sidebar-nav">
         <button class="nav-btn" @click="assetPanel?.open()">
@@ -142,6 +150,8 @@
       </div>
     </div>
   </Teleport>
+
+  <HistorySearch v-if="searchOpen" @close="searchOpen = false" />
 </template>
 
 <script setup>
@@ -151,6 +161,7 @@ import { useChatStore } from '../../stores/chat'
 import { useSettingsStore } from '../../stores/settings'
 import { useRouter } from 'vue-router'
 import { loadConversation } from '../../utils/conversation'
+import HistorySearch from '../chat/HistorySearch.vue'
 
 const topics = useTopicsStore()
 const chat = useChatStore()
@@ -159,6 +170,7 @@ const router = useRouter()
 const emit = defineEmits(['open-settings'])
 
 const open = ref(true)
+const searchOpen = ref(false)
 const isMobile = ref(false)
 const topicListRef = ref(null)
 const topicRefs = {}
@@ -415,8 +427,20 @@ function onSidebarTouchEnd(e) {
 
 .sidebar { width: 260px; min-width: 260px; height: 100%; background: var(--bg-sidebar); display: flex; flex-direction: column; border-right: 1px solid var(--border-color); }
 
+/* 顶部搜索入口 */
+.sidebar-search { padding: 12px 12px 0; flex-shrink: 0; }
+.search-entry {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 8px 10px; border: 1px solid var(--border-color); border-radius: 9px;
+  background: var(--bg-primary); color: var(--text-muted);
+  font-size: 12px; font-family: inherit; cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.search-entry i { font-size: 12px; }
+.search-entry:hover { border-color: var(--accent); color: var(--text-secondary); }
+
 /* 快捷入口 */
-.sidebar-nav { display: flex; flex-direction: column; gap: 2px; padding: 12px 12px 8px; }
+.sidebar-nav { display: flex; flex-direction: column; gap: 2px; padding: 6px 12px 8px; }
 .nav-btn { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: none; border-radius: 8px; background: transparent; color: var(--text-primary); cursor: pointer; font-size: 13px; font-family: inherit; transition: background 0.15s; }
 .nav-btn span { flex: 1; text-align: left; }
 .nav-btn:hover { background: var(--bg-hover); }

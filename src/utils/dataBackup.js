@@ -275,9 +275,9 @@ export async function applyBackup(entries) {
     throw new Error('备份内容为空，已取消导入')
   }
   // 导入前保留本机密钥，避免备份中的脱敏空值覆盖真实 Key
-  let currentApiKey = ''
-  let currentSecondaryKey = ''
-  let currentTavilyKey = ''
+  let currentApiKey
+  let currentSecondaryKey
+  let currentTavilyKey
   try {
     const current = JSON.parse(getItem(SETTINGS_KEY) || '{}')
     currentApiKey = current.apiKey || ''
@@ -335,7 +335,7 @@ function pruneAutoBackups() {
 
 export async function maybeAutoBackup() {
   const today = localDateKey()
-  let last = ''
+  let last
   try { last = localStorage.getItem(AUTO_LAST_KEY) || '' } catch { last = '' }
   if (last === today) return null
 

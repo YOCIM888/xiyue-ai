@@ -1,56 +1,67 @@
 /**
  * 计算沙箱调度层：
- * - JS Worker：表格统计校验 + 受限 JavaScript 执行
- * - Python Worker：按需加载 Pyodide，执行 Python 代码
+ * - 表格统计：Worker 中运行应用自有的纯解析代码（不执行模型代码）
+ * - JS / Python：在 sandbox="allow-scripts" 的隐藏 iframe 中执行模型代码。
+ *   iframe 无 allow-same-origin → opaque origin，天然无法访问父页 DOM、
+ *   localStorage、IndexedDB、Cookie；CSP 再禁掉网络/子 Worker（Python 仅放行
+ *   Pyodide CDN）。隔离由浏览器强制，不再依赖可绕过的正则黑名单。
+ *   超时或中止时直接移除 iframe，等价于终止整个运行时。
  */
+import jsBoot from './jsBoot.js?raw'
+import pyBoot from './pyBoot.js?raw'
 
 const JS_TIMEOUT = 15000
 const TABLE_TIMEOUT = 20000
 const PYTHON_TIMEOUT = 120000
+const READY_TIMEOUT = 15000
 
-let jsWorker = null
-let jsSeq = 0
-const jsPending = new Map()
-
-let pyWorker = null
-let pySeq = 0
-const pyPending = new Map()
-
-function makeError(data) {
-  return new Error(data?.error || '沙箱执行失败')
+const PY_CDN_HOSTS = 'https://cdn.jsdelivr.net https://unpkg.com https://registry.npmmirror.com'
+const CSP = {
+  js: "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'",
+  python: `default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' ${PY_CDN_HOSTS}; connect-src ${PY_CDN_HOSTS}`,
 }
 
-function terminateJsWorker(error) {
-  for (const pending of jsPending.values()) {
+function buildSrcdoc(kind) {
+  const boot = kind === 'python' ? pyBoot : jsBoot
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${CSP[kind]}"></head><body><script>${boot}</script></body></html>`
+}
+
+// ---- 表格统计 Worker ----
+let tableWorker = null
+let tableSeq = 0
+const tablePending = new Map()
+
+function terminateTableWorker(error) {
+  for (const pending of tablePending.values()) {
     clearTimeout(pending.timer)
     pending.cleanup?.()
     pending.reject(error)
   }
-  jsPending.clear()
-  try { jsWorker?.terminate() } catch { /* ignore */ }
-  jsWorker = null
+  tablePending.clear()
+  try { tableWorker?.terminate() } catch { /* ignore */ }
+  tableWorker = null
 }
 
-function ensureJsWorker() {
-  if (jsWorker) return jsWorker
-  jsWorker = new Worker(new URL('./jsWorker.js', import.meta.url), { type: 'module' })
-  jsWorker.onmessage = (event) => {
+function ensureTableWorker() {
+  if (tableWorker) return tableWorker
+  tableWorker = new Worker(new URL('./tableWorker.js', import.meta.url), { type: 'module' })
+  tableWorker.onmessage = (event) => {
     const data = event.data || {}
-    const pending = jsPending.get(data.id)
+    const pending = tablePending.get(data.id)
     if (!pending) return
     clearTimeout(pending.timer)
     pending.cleanup?.()
-    jsPending.delete(data.id)
+    tablePending.delete(data.id)
     if (data.ok) pending.resolve(data)
-    else pending.reject(makeError(data))
+    else pending.reject(new Error(data.error || '表格统计失败'))
   }
-  jsWorker.onerror = (event) => {
-    terminateJsWorker(new Error(event?.message || '沙箱 Worker 运行失败'))
+  tableWorker.onerror = (event) => {
+    terminateTableWorker(new Error(event?.message || '表格统计 Worker 运行失败'))
   }
-  return jsWorker
+  return tableWorker
 }
 
-function callJs(kind, payload, timeout, signal) {
+function callTable(text, timeout, signal) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(new Error('已中止'))
@@ -58,20 +69,20 @@ function callJs(kind, payload, timeout, signal) {
     }
     let worker
     try {
-      worker = ensureJsWorker()
+      worker = ensureTableWorker()
     } catch (err) {
       reject(err)
       return
     }
-    const id = ++jsSeq
+    const id = ++tableSeq
     const timer = setTimeout(() => {
-      terminateJsWorker(new Error('计算超时，已终止本地沙箱'))
+      terminateTableWorker(new Error('表格统计超时'))
     }, timeout)
-    const onAbort = () => terminateJsWorker(new Error('已中止'))
+    const onAbort = () => terminateTableWorker(new Error('已中止'))
     signal?.addEventListener('abort', onAbort, { once: true })
     const cleanup = () => signal?.removeEventListener('abort', onAbort)
-    jsPending.set(id, { resolve, reject, timer, cleanup })
-    worker.postMessage({ id, kind, payload })
+    tablePending.set(id, { resolve, reject, timer, cleanup })
+    worker.postMessage({ id, payload: { text } })
   })
 }
 
@@ -80,17 +91,104 @@ export async function analyzeTable(text, { signal } = {}) {
   const source = String(text || '')
   if (!source.trim()) return { ok: false, error: '没有可统计的表格数据' }
   try {
-    const result = await callJs('table', { text: source }, TABLE_TIMEOUT, signal)
+    const result = await callTable(source, TABLE_TIMEOUT, signal)
     return { ok: true, summary: result.summary || '' }
   } catch (err) {
     return { ok: false, error: err?.message || String(err) }
   }
 }
 
+// ---- 隔离 iframe ----
+const frames = { js: null, python: null }
+
+function destroyFrame(kind, error) {
+  const frame = frames[kind]
+  if (!frame) return
+  frames[kind] = null
+  clearTimeout(frame.readyTimer)
+  window.removeEventListener('message', frame.handler)
+  for (const pending of frame.pending.values()) {
+    clearTimeout(pending.timer)
+    pending.cleanup?.()
+    pending.reject(error)
+  }
+  frame.pending.clear()
+  frame.readyReject(error)
+  try { frame.el.remove() } catch { /* ignore */ }
+}
+
+function ensureFrame(kind) {
+  if (frames[kind]) return frames[kind]
+  const el = document.createElement('iframe')
+  el.setAttribute('sandbox', 'allow-scripts')
+  el.setAttribute('aria-hidden', 'true')
+  el.style.display = 'none'
+  const frame = { el, pending: new Map(), seq: 0, handler: null, readyTimer: null, readyReject: () => {} }
+  frame.ready = new Promise((resolve, reject) => {
+    frame.readyReject = reject
+    frame.readyTimer = setTimeout(() => {
+      destroyFrame(kind, new Error('沙箱初始化超时'))
+    }, READY_TIMEOUT)
+    frame.handler = (event) => {
+      if (event.source !== el.contentWindow) return
+      const data = event.data || {}
+      if (data.type === 'ready') {
+        clearTimeout(frame.readyTimer)
+        resolve()
+        return
+      }
+      const pending = frame.pending.get(data.id)
+      if (!pending) return
+      if (data.type === 'status') {
+        pending.onStatus?.(data.text || '')
+        return
+      }
+      clearTimeout(pending.timer)
+      pending.cleanup?.()
+      frame.pending.delete(data.id)
+      if (data.ok) pending.resolve(data)
+      else pending.reject(new Error(data.error || '沙箱执行失败'))
+    }
+    window.addEventListener('message', frame.handler)
+  })
+  frame.ready.catch(() => { /* 失败通过 pending 拒绝传递给调用方 */ })
+  el.srcdoc = buildSrcdoc(kind)
+  document.body.appendChild(el)
+  frames[kind] = frame
+  return frame
+}
+
+function callFrame(kind, code, timeout, signal, onStatus) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error('已中止'))
+      return
+    }
+    let frame
+    try {
+      frame = ensureFrame(kind)
+    } catch (err) {
+      reject(err)
+      return
+    }
+    const id = ++frame.seq
+    const timer = setTimeout(() => {
+      destroyFrame(kind, new Error(kind === 'python' ? 'Python 执行超时，已终止运行时' : '计算超时，已终止本地沙箱'))
+    }, timeout)
+    const onAbort = () => destroyFrame(kind, new Error('已中止'))
+    signal?.addEventListener('abort', onAbort, { once: true })
+    const cleanup = () => signal?.removeEventListener('abort', onAbort)
+    frame.pending.set(id, { resolve, reject, timer, cleanup, onStatus })
+    frame.ready.then(() => {
+      if (frame.pending.has(id)) frame.el.contentWindow.postMessage({ id, code }, '*')
+    }).catch(() => { /* ready 失败时 pending 已被 destroyFrame 拒绝 */ })
+  })
+}
+
 /** 执行受限 JavaScript，代码需要用 return 返回结果 */
 export async function runJavaScript(code, { signal } = {}) {
   try {
-    const result = await callJs('js', { code: String(code || '') }, JS_TIMEOUT, signal)
+    const result = await callFrame('js', String(code || ''), JS_TIMEOUT, signal)
     return {
       ok: true,
       output: [result.logs, result.output].filter(Boolean).join('\n') || '（无输出）',
@@ -100,64 +198,14 @@ export async function runJavaScript(code, { signal } = {}) {
   }
 }
 
-function terminatePyWorker(error) {
-  for (const pending of pyPending.values()) {
-    clearTimeout(pending.timer)
-    pending.cleanup?.()
-    pending.resolve({ ok: false, error: error?.message || String(error) })
-  }
-  pyPending.clear()
-  try { pyWorker?.terminate() } catch { /* ignore */ }
-  pyWorker = null
-}
-
-function ensurePyWorker() {
-  if (pyWorker) return pyWorker
-  pyWorker = new Worker(new URL('./pythonWorker.js', import.meta.url))
-  pyWorker.onmessage = (event) => {
-    const data = event.data || {}
-    const pending = pyPending.get(data.id)
-    if (!pending) return
-    if (data.type === 'status') {
-      pending.onStatus?.(data.text || '')
-      return
-    }
-    clearTimeout(pending.timer)
-    pending.cleanup?.()
-    pyPending.delete(data.id)
-    if (data.ok) pending.resolve({ ok: true, output: data.output || '（无输出）' })
-    else pending.resolve({ ok: false, error: data.error || 'Python 执行失败' })
-  }
-  pyWorker.onerror = (event) => {
-    terminatePyWorker(new Error(event?.message || 'Python 沙箱运行失败'))
-  }
-  return pyWorker
-}
-
 /** 按需加载 Pyodide 并执行 Python 代码 */
 export async function runPython(code, { onStatus, signal } = {}) {
-  return new Promise((resolve) => {
-    if (signal?.aborted) {
-      resolve({ ok: false, error: '已中止' })
-      return
-    }
-    let worker
-    try {
-      worker = ensurePyWorker()
-    } catch (err) {
-      resolve({ ok: false, error: err?.message || String(err) })
-      return
-    }
-    const id = ++pySeq
-    const timer = setTimeout(() => {
-      terminatePyWorker(new Error('Python 执行超时，已终止运行时'))
-    }, PYTHON_TIMEOUT)
-    const onAbort = () => terminatePyWorker(new Error('已中止'))
-    signal?.addEventListener('abort', onAbort, { once: true })
-    const cleanup = () => signal?.removeEventListener('abort', onAbort)
-    pyPending.set(id, { resolve, timer, onStatus, cleanup })
-    worker.postMessage({ id, code: String(code || '') })
-  })
+  try {
+    const result = await callFrame('python', String(code || ''), PYTHON_TIMEOUT, signal, onStatus)
+    return { ok: true, output: result.output || '（无输出）' }
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) }
+  }
 }
 
 /** 从模型回复中提取 sandbox 代码块 */

@@ -30,7 +30,7 @@ const VISION_ERROR_RE =
  * @param {'auto'|'vision'|'text'} mode 用户配置：自动 / 支持图片 / 纯文本
  * @returns {'vision'|'text'|'unknown'} unknown 表示需要调用接口后再按错误判断
  */
-export function detectVisionSupport(model, apiBase = '', mode = 'auto') {
+export function detectVisionSupport(model, _apiBase = '', mode = 'auto') {
   if (mode === 'vision') return 'vision'
   if (mode === 'text') return 'text'
   const name = String(model || '')

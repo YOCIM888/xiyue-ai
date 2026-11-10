@@ -129,7 +129,7 @@ import { useAssetsStore } from '../../stores/assets'
 import { useChatStore } from '../../stores/chat'
 import { useTopicsStore } from '../../stores/topics'
 import { compressImageDataUrl, OCR_IMAGE_OPTIONS } from '../../utils/image'
-import { estimateMessagesTokens } from '../../utils/contextUsage'
+import { estimateMessagesTokens, estimatePartsTokens, estimateTokens } from '../../utils/contextUsage'
 import ContextRing from '../common/ContextRing.vue'
 import { matchSlashCommands, parseSlashInput, SLASH_COMMANDS } from '../../services/slashCommands'
 import { exportConversation, printConversation } from '../../services/conversationExport'
@@ -146,13 +146,18 @@ const topics = useTopicsStore()
 const props = defineProps({ isLoading: { type: Boolean, default: false } })
 const emit = defineEmits(['send', 'stop'])
 
-// 与 TopBar 原逻辑一致：系统提示词 + 当前分支消息
+// 与 TopBar 原逻辑一致：系统提示词 + 当前分支消息（含思考、工具执行链与流式中的临时内容）
 const contextUsed = computed(() => {
   const system = chat.buildSystemPrompt()
+  const live = chat.isLoading
+    ? estimateTokens(chat.streamingThinking) +
+      estimateTokens(chat.streamingContent) +
+      estimatePartsTokens(chat.streamingParts, { includeThinking: false })
+    : 0
   return estimateMessagesTokens([
     ...(system ? [{ role: 'system', content: system }] : []),
     ...chat.messages,
-  ])
+  ]) + live
 })
 const contextLimit = computed(() => settings.contextLength || 131072)
 

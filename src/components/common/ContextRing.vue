@@ -4,7 +4,7 @@
       type="button"
       class="ctx-ring-btn"
       :class="{ open }"
-      :title="`上下文用量 ${usedText} / ${limitText} tokens`"
+      :title="`上下文用量 ${usedText} / ${limitText} tokens（含思考与工具执行链）`"
       @click="toggle"
     >
       <svg :width="size" :height="size" :viewBox="`0 0 ${size} ${size}`">
@@ -42,6 +42,7 @@
         {{ usedText }}<span class="ctx-pop-sep">/</span>{{ limitText }}
       </div>
       <div class="ctx-pop-sub">tokens · 已占用 {{ pctText }}%</div>
+      <div class="ctx-pop-sub">含思考、工具执行链与流式内容估算</div>
     </div>
   </span>
 </template>

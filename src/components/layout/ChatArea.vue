@@ -8,6 +8,7 @@
         :messages="messages"
         :streamingContent="chatStore.streamingContent"
         :streamingThinking="chatStore.streamingThinking"
+        :streamingParts="chatStore.streamingParts"
         :isLoading="chatStore.isLoading"
         :searching="chatStore.searching"
         :imageGenerating="chatStore.imageGenerating"
