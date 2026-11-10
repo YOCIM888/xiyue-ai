@@ -30,7 +30,7 @@
     </div>
 
     <!-- Toast 提示 -->
-    <div v-if="toast.show" class="toast" :class="toast.type">
+    <div v-if="toast.show" class="toast" :class="toast.type" :style="{ bottom: toast.bottom + 'px' }">
       <span>{{ toast.message }}</span>
       <button v-if="toast.actionText" class="toast-action" @click="runToastAction">{{ toast.actionText }}</button>
     </div>
@@ -52,7 +52,7 @@ import { nextTick, reactive, ref } from 'vue'
 const modal = reactive({ show: false, message: '', confirmText: '', cancelText: '', onConfirm: null, onCancel: null })
 const prompt = reactive({ show: false, message: '', placeholder: '', value: '', confirmText: '', resolve: null })
 const promptInput = ref(null)
-const toast = reactive({ show: false, message: '', type: 'info', actionText: '', onAction: null })
+const toast = reactive({ show: false, message: '', type: 'info', actionText: '', onAction: null, bottom: 60 })
 const menu = reactive({ show: false, x: 0, y: 0, items: [], onClose: null })
 
 function showConfirm(message, { confirmText, cancelText } = {}) {
@@ -96,12 +96,24 @@ function cancelPrompt() {
 }
 
 let toastTimer = null
+
+/** 聊天页输入框高度不固定（附件、自动增高），气泡要贴着它上沿才不会盖住输入区 */
+function toastBottom() {
+  const min = 60
+  const max = Math.round(window.innerHeight * 0.45)
+  const composer = document.querySelector('.chat-input-container')
+  if (!composer) return min
+  const gap = window.innerHeight - composer.getBoundingClientRect().top + 12
+  return Math.max(min, Math.min(max, Math.round(gap)))
+}
+
 function showToast(message, type = 'info', duration = 2500, { actionText = '', onAction = null } = {}) {
   clearTimeout(toastTimer)
   toast.message = message
   toast.type = type
   toast.actionText = actionText
   toast.onAction = onAction
+  toast.bottom = toastBottom()
   toast.show = true
   if (duration > 0) {
     toastTimer = setTimeout(() => { toast.show = false }, duration)

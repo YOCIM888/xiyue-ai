@@ -22,6 +22,13 @@ export default [
     },
   },
   {
+    // jsBoot 整份源码会被塞进沙箱 iframe 的经典脚本里，modulePaths.js 的函数在同一份文档里先行声明
+    files: ['src/services/sandbox/jsBoot.js'],
+    languageOptions: {
+      globals: { ...globals.browser, rewriteSpecifiers: 'readonly' },
+    },
+  },
+  {
     files: ['tests/**/*.js', '*.config.js'],
     languageOptions: {
       ecmaVersion: 'latest',

@@ -128,4 +128,8 @@ export default defineConfig({
   build: {
     target: 'esnext',
   },
+  optimizeDeps: {
+    // 沙箱转译按需动态 import：不预先声明的话，开发服务器上第一次跑 TS/Vue 会撞上 504 Outdated Optimize Dep
+    include: ['esbuild-wasm/esm/browser.js', '@vue/compiler-sfc'],
+  },
 })

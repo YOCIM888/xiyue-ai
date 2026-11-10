@@ -179,8 +179,8 @@
 
             <div v-if="settings.workModeEnabled" class="skill-note">
               <span>
-                <template v-if="wsStatus.mode === 'folder'">当前工作区：本机文件夹「{{ wsStatus.folderName }}」，AI 的读写都限定在这个文件夹内；到「工作区」面板可更换或改回内置工作区。</template>
-                <template v-else>当前使用浏览器内置工作区：文件保存在浏览器中，可在「工作区」面板查看、下载、导入或挂载本机文件夹。</template>
+                <template v-if="wsStatus.mode === 'folder'">当前工作区：本机文件夹「{{ wsStatus.folderName }}」，AI 的读写都限定在这个文件夹内；到「工作区」面板的「文件」菜单可更换或改回内置工作区。</template>
+                <template v-else>当前使用浏览器内置工作区：文件保存在浏览器中，可在「工作区」面板查看、下载、导入，或用「文件」菜单挂载本机文件夹。</template>
               </span>
             </div>
             <div v-if="settings.workModeEnabled && wsStatus.mode === 'folder' && wsStatus.permission === 'prompt'" class="skill-note warn">

@@ -4,11 +4,14 @@
  * - JS / Python：在 sandbox="allow-scripts" 的隐藏 iframe 中执行模型代码。
  *   iframe 无 allow-same-origin → opaque origin，天然无法访问父页 DOM、
  *   localStorage、IndexedDB、Cookie；CSP 再禁掉网络/子 Worker（Python 仅放行
- *   Pyodide CDN）。隔离由浏览器强制，不再依赖可绕过的正则黑名单。
+ *   Pyodide CDN）。JS 侧额外放开 blob:，只用于把工作区模块源码喂进同一个
+ *   opaque origin 里加载，不引入任何外部来源。隔离由浏览器强制，
+ *   不再依赖可绕过的正则黑名单。
  *   超时或中止时直接移除 iframe，等价于终止整个运行时。
  */
 import jsBoot from './jsBoot.js?raw'
 import pyBoot from './pyBoot.js?raw'
+import modulePathsRaw from './modulePaths.js?raw'
 
 const JS_TIMEOUT = 15000
 const TABLE_TIMEOUT = 20000
@@ -17,12 +20,20 @@ const READY_TIMEOUT = 15000
 
 const PY_CDN_HOSTS = 'https://cdn.jsdelivr.net https://unpkg.com https://registry.npmmirror.com'
 const CSP = {
-  js: "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'",
+  js: "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' blob:",
   python: `default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' ${PY_CDN_HOSTS}; connect-src ${PY_CDN_HOSTS}`,
 }
 
+/**
+ * modulePaths.js 里只允许 `export function` 形式的导出，去掉关键字后这些函数
+ * 就成了经典脚本的全局函数，供 jsBoot 在 iframe 内直接调用（tests/sandboxModules.test.js 守住这个前提）。
+ */
+function toClassicScript(source) {
+  return String(source).replace(/^export\s+function/gm, 'function')
+}
+
 function buildSrcdoc(kind) {
-  const boot = kind === 'python' ? pyBoot : jsBoot
+  const boot = kind === 'python' ? pyBoot : `${toClassicScript(modulePathsRaw)}\n${jsBoot}`
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${CSP[kind]}"></head><body><script>${boot}</script></body></html>`
 }
 
@@ -158,7 +169,7 @@ function ensureFrame(kind) {
   return frame
 }
 
-function callFrame(kind, code, timeout, signal, onStatus) {
+function callFrame(kind, payload, timeout, signal, onStatus) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(new Error('已中止'))
@@ -180,15 +191,25 @@ function callFrame(kind, code, timeout, signal, onStatus) {
     const cleanup = () => signal?.removeEventListener('abort', onAbort)
     frame.pending.set(id, { resolve, reject, timer, cleanup, onStatus })
     frame.ready.then(() => {
-      if (frame.pending.has(id)) frame.el.contentWindow.postMessage({ id, code }, '*')
+      if (frame.pending.has(id)) frame.el.contentWindow.postMessage({ id, ...payload }, '*')
     }).catch(() => { /* ready 失败时 pending 已被 destroyFrame 拒绝 */ })
   })
 }
 
-/** 执行受限 JavaScript，代码需要用 return 返回结果 */
-export async function runJavaScript(code, { signal } = {}) {
+/**
+ * 执行受限 JavaScript。
+ * 传 modules 时按工作区模块图加载（入口可为模块文件或内联代码），代码用 return 或
+ * 导出函数返回结果；不传时保持旧的纯代码语义。
+ */
+export async function runJavaScript(code, { modules, order, entry, signal } = {}) {
+  const graph = Array.isArray(modules) && modules.length ? { modules, order, entry } : null
   try {
-    const result = await callFrame('js', String(code || ''), JS_TIMEOUT, signal)
+    const result = await callFrame(
+      'js',
+      graph ? { code: String(code || ''), ...graph } : { code: String(code || '') },
+      JS_TIMEOUT,
+      signal
+    )
     return {
       ok: true,
       output: [result.logs, result.output].filter(Boolean).join('\n') || '（无输出）',
@@ -201,7 +222,7 @@ export async function runJavaScript(code, { signal } = {}) {
 /** 按需加载 Pyodide 并执行 Python 代码 */
 export async function runPython(code, { onStatus, signal } = {}) {
   try {
-    const result = await callFrame('python', String(code || ''), PYTHON_TIMEOUT, signal, onStatus)
+    const result = await callFrame('python', { code: String(code || '') }, PYTHON_TIMEOUT, signal, onStatus)
     return { ok: true, output: result.output || '（无输出）' }
   } catch (err) {
     return { ok: false, error: err?.message || String(err) }

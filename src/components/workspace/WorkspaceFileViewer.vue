@@ -1,5 +1,5 @@
 <template>
-  <div class="wsv">
+  <div class="wsv" ref="rootEl">
     <div class="wsv-head">
       <button class="wsv-back" title="返回文件树" @click="$emit('close')">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
@@ -49,6 +49,7 @@
 
       <div v-else-if="mode === 'split'" class="wsv-split">
         <div class="wsv-code-scroll">
+          <span v-if="band" class="wsv-band" :style="band"></span>
           <pre class="wsv-gutter">{{ lineNumbers }}</pre>
           <pre class="wsv-code hljs" v-html="highlightedHtml"></pre>
         </div>
@@ -108,6 +109,7 @@
       </div>
 
       <div v-else class="wsv-code-scroll">
+        <span v-if="band" class="wsv-band" :style="band"></span>
         <p v-if="binary" class="wsv-note">该文件疑似二进制内容，建议下载后查看。</p>
         <p v-if="jsonInvalid && mode === 'formatted'" class="wsv-note">JSON 解析失败，已显示原文。</p>
         <pre class="wsv-gutter">{{ lineNumbers }}</pre>
@@ -117,6 +119,7 @@
 
     <div class="wsv-foot">
       <span class="wsv-path" :title="path">{{ path }}</span>
+      <span v-if="focusLine > 0">定位第 {{ focusLine }} 行</span>
       <span v-if="text">{{ lineCount }} 行</span>
       <span v-if="truncated" class="wsv-warn">预览已截断，下载可看全文</span>
       <span v-if="modified" class="wsv-time">修改于 {{ formatTime(modified) }}</span>
@@ -125,7 +128,7 @@
 </template>
 
 <script setup>
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import hljs from 'highlight.js'
 import MarkdownRenderer from '../common/MarkdownRenderer.vue'
 import {
@@ -137,6 +140,7 @@ const props = defineProps({
   path: { type: String, required: true },
   name: { type: String, default: '' },
   entry: { type: Object, default: null },
+  focusLine: { type: Number, default: 0 },
   aiChanged: { type: Boolean, default: false },
   readOnly: { type: Boolean, default: false },
 })
@@ -158,6 +162,8 @@ const IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'a
 const MAX_HIGHLIGHT_CHARS = 200000
 
 const mode = ref('source')
+const rootEl = ref(null)
+const band = ref(null)
 const text = ref('')
 const size = ref(Number(props.entry?.size) || 0)
 const modified = ref(Number(props.entry?.modified) || 0)
@@ -294,8 +300,11 @@ async function load(resetMode = true) {
   previewError.value = ''
   srcdoc.value = ''
   binary.value = false
+  band.value = null
   revokeBlob()
   if (resetMode) mode.value = defaultMode()
+  // 从搜索结果跳转时必须看源码，否则预览视图里没有可定位的行
+  if (props.focusLine > 0 && kind.value !== 'image' && kind.value !== 'pdf') mode.value = 'source'
   try {
     if (kind.value === 'image' || kind.value === 'pdf') {
       const blob = await getFileBlob(props.path)
@@ -317,8 +326,38 @@ async function load(resetMode = true) {
   } catch (err) {
     if (seq === loadSeq) error.value = err?.message || '读取文件失败'
   } finally {
-    if (seq === loadSeq) loading.value = false
+    if (seq === loadSeq) {
+      loading.value = false
+      // 代码区在 loading 结束后才挂载，定位必须等这一步之后
+      if (props.focusLine > 0) await jumpToLine()
+    }
   }
+}
+
+async function jumpToLine() {
+  const line = Number(props.focusLine)
+  if (!(line > 0) || !text.value) return
+  await nextTick()
+  const scroller = rootEl.value?.querySelector('.wsv-code-scroll')
+  const code = scroller?.querySelector('.wsv-code')
+  if (!scroller || !code) return
+  const total = lineCount.value
+  if (line > total) return
+  const height = lineHeightOf(code, total)
+  const origin = code.offsetTop + (parseFloat(getComputedStyle(code).paddingTop) || 0)
+  const top = origin + (line - 1) * height
+  band.value = {
+    top: `${top}px`,
+    height: `${height}px`,
+    width: `${Math.max(scroller.clientWidth, code.scrollWidth)}px`,
+  }
+  scroller.scrollTop = Math.max(0, top - scroller.clientHeight / 3)
+}
+
+function lineHeightOf(el, lines) {
+  const computed = parseFloat(getComputedStyle(el).lineHeight)
+  if (Number.isFinite(computed) && computed > 0) return computed
+  return el.scrollHeight / Math.max(1, lines)
 }
 
 async function ensurePreview() {
@@ -544,12 +583,21 @@ onUnmounted(() => {
 .wsv-code-scroll {
   flex: 1;
   min-height: 0;
+  position: relative;
   display: flex;
   align-items: flex-start;
   overflow: auto;
   font-family: ui-monospace, SFMono-Regular, Consolas, 'Courier New', monospace;
   font-size: 12px;
   line-height: 1.65;
+}
+.wsv-band {
+  position: absolute;
+  left: 0;
+  z-index: 0;
+  background: rgba(250, 204, 21, 0.16);
+  border-left: 2px solid var(--accent);
+  pointer-events: none;
 }
 .wsv-gutter {
   position: sticky;

@@ -7,6 +7,7 @@
  */
 import JSZip from 'jszip'
 import { idbGet, idbSet, idbDelete } from '../utils/idb'
+import { createMatcher, findMatches, globToRegExp } from '../utils/textSearch'
 import { resolveAssetPath, mimeFromPath, rewriteCssUrls, rewriteSrcset } from '../utils/htmlInline'
 
 const HANDLE_KEY = 'xiyue_workspace_dir_handle'
@@ -28,6 +29,17 @@ const MAX_PREVIEW_ASSET_BYTES = 2 * 1024 * 1024
 const MAX_PREVIEW_TOTAL_BYTES = 8 * 1024 * 1024
 const MAX_ZIP_FILES = 2000
 const MAX_ZIP_BYTES = 300 * 1024 * 1024
+const MAX_SEARCH_VISITED = 6000
+const MAX_SEARCH_SCAN_BYTES = 40 * 1024 * 1024
+const MAX_SEARCH_FILE_BYTES = 1024 * 1024
+const MAX_SEARCH_RESULTS = 200
+const SEARCH_YIELD_EVERY = 24
+const BINARY_PROBE_CHARS = 4096
+const MAX_MODULE_BYTES = 512 * 1024
+const SEARCH_SKIP_DIRS = new Set([
+  'node_modules', 'dist', 'build', 'out', 'target', 'coverage',
+  '__pycache__', '.venv', 'venv', '.git', '.svn', '.next', '.nuxt', '.cache',
+])
 const RESERVED_NAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i
 const LEGACY_TRASH_RE = /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z_(.+)$/
 
@@ -288,6 +300,123 @@ export async function searchWorkspace(keyword, { limit = 200, maxVisited = 4000 
     a.kind === b.kind ? a.path.localeCompare(b.path) : a.kind === 'dir' ? -1 : 1
   )
   return { results, truncated }
+}
+
+function looksBinary(text) {
+  return text.slice(0, BINARY_PROBE_CHARS).includes(String.fromCharCode(0))
+}
+
+/** 全工作区或指定子目录的内容搜索：逐行匹配，带条目数与扫描字节双上限 */
+export async function searchFiles({
+  query,
+  path = '',
+  glob = '',
+  ignoreCase = false,
+  regex = false,
+  context = 0,
+  limit = MAX_SEARCH_RESULTS,
+  maxVisited = MAX_SEARCH_VISITED,
+  maxBytes = MAX_SEARCH_SCAN_BYTES,
+} = {}) {
+  const matcher = createMatcher({ query, regex, ignoreCase })
+  if (matcher.error) throw new Error(matcher.error)
+  const fileFilter = globToRegExp(glob)
+  const segments = splitPath(path)
+  const startDir = await resolveDir(segments)
+  const startPrefix = segments.join('/')
+
+  const results = []
+  let visited = 0
+  let scannedBytes = 0
+  let filesMatched = 0
+  let oversizedSkipped = 0
+  let truncated = false
+  let sincePause = 0
+
+  async function walk(dir, prefix) {
+    for await (const entry of dir.values()) {
+      if (entry.name === TRASH_DIR || entry.name === HISTORY_DIR) continue
+      if (visited >= maxVisited || results.length >= limit) {
+        truncated = true
+        return
+      }
+      const fullPath = prefix ? `${prefix}/${entry.name}` : entry.name
+      if (entry.kind === 'directory') {
+        if (SEARCH_SKIP_DIRS.has(entry.name)) continue
+        visited += 1
+        await walk(entry, fullPath)
+        if (truncated) return
+        continue
+      }
+      visited += 1
+      if (fileFilter && !fileFilter.test(fullPath)) continue
+
+      let file
+      try {
+        file = await entry.getFile()
+      } catch {
+        continue
+      }
+      if (file.size > MAX_SEARCH_FILE_BYTES) {
+        oversizedSkipped += 1
+        continue
+      }
+      const text = new TextDecoder('utf-8', { fatal: false }).decode(await file.arrayBuffer())
+      scannedBytes += file.size
+      if (looksBinary(text)) continue
+
+      const { hits, truncated: hitsTruncated, hitCount } = findMatches(text, matcher, { context })
+      if (hitsTruncated) truncated = true
+      if (hits.length) {
+        filesMatched += 1
+        for (const hit of hits) {
+          if (results.length >= limit) {
+            truncated = true
+            return
+          }
+          results.push({
+            path: fullPath,
+            line: hit.line,
+            text: hit.text,
+            matched: hit.matched,
+            range: hit.range,
+            hitCount,
+          })
+        }
+      }
+      if (scannedBytes >= maxBytes) {
+        truncated = true
+        return
+      }
+      // 大工作区扫描让出主线程，避免面板与流式渲染卡死
+      if (++sincePause >= SEARCH_YIELD_EVERY) {
+        sincePause = 0
+        await new Promise(resolve => setTimeout(resolve, 0))
+      }
+    }
+  }
+
+  await walk(startDir, startPrefix)
+  return { results, filesMatched, visited, scannedBytes, oversizedSkipped, truncated }
+}
+
+/** 沙箱模块加载用的原文读取：超限或二进制直接报错，不做静默截断 */
+export async function readModuleText(path, { maxBytes = MAX_MODULE_BYTES } = {}) {
+  const normalized = splitPath(path).join('/')
+  if (!normalized) throw new Error('缺少文件路径')
+  const { dir, name } = await resolveParent(normalized)
+  let file
+  try {
+    file = await (await dir.getFileHandle(name)).getFile()
+  } catch (err) {
+    throw friendlyFsError(err, normalized)
+  }
+  if (file.size > maxBytes) {
+    throw new Error(`模块 ${normalized} 为 ${formatBytes(file.size)}，超过单个模块 ${formatBytes(maxBytes)} 上限`)
+  }
+  const text = new TextDecoder('utf-8', { fatal: false }).decode(await file.arrayBuffer())
+  if (looksBinary(text)) throw new Error(`模块 ${normalized} 不是文本文件`)
+  return { path: normalized, text, size: file.size }
 }
 
 async function readRaw(path) {
@@ -778,12 +907,55 @@ export async function restoreTrash(trashName) {
   return { path: restoredPath, renamed: restoredPath !== targetPath }
 }
 
+/** 读取回收站条目的原路径与删除时刻，供彻底删除后清理历史版本用 */
+async function readTrashOrigin(trash, entryName) {
+  try {
+    const meta = await readJsonFrom(await trash.getDirectoryHandle(entryName), 'meta.json')
+    if (!meta?.path) return null
+    return { path: String(meta.path), deletedAt: Number(meta.at) || null }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 条目彻底删除后，把它原路径（含目录下所有文件）的历史版本一并删掉。
+ * 只删删除时刻之前的版本：同路径此后重建的文件，它的新版本必须留下。
+ */
+async function pruneHistoryForDeleted(origins) {
+  const targets = origins.filter(item => item?.path && item.deletedAt)
+  if (!targets.length) return
+  const dir = await getHistoryDir(false)
+  if (!dir) return
+  const index = await readHistoryIndex(dir)
+  let dropped = 0
+  for (const [key, versions] of Object.entries(index.entries)) {
+    const matched = targets.filter(t => key === t.path || key.startsWith(`${t.path}/`))
+    if (!matched.length) continue
+    // 取最晚的一次彻底删除时刻：更早的版本都已经随文件消失，更晚的属于重建后的新文件
+    const cutoff = Math.max(...matched.map(t => t.deletedAt))
+    const list = Array.isArray(versions) ? versions : []
+    const doomed = list.filter(version => (version.at || 0) <= cutoff)
+    const kept = list.filter(version => (version.at || 0) > cutoff)
+    for (const version of doomed) {
+      try { await dir.removeEntry(version.file) } catch { /* 已被清理 */ }
+    }
+    dropped += doomed.length
+    if (kept.length) index.entries[key] = kept
+    else delete index.entries[key]
+  }
+  if (dropped) await writeHistoryIndex(dir, index)
+}
+
 export async function purgeTrash(trashName) {
   const segments = splitPath(trashName)
   if (segments.length !== 1) throw new Error('无效的回收站条目')
   const root = await getRoot()
   const trash = await root.getDirectoryHandle(TRASH_DIR)
-  await trash.removeEntry(segments[0], { recursive: true })
+  const entryName = segments[0]
+  const origin = await readTrashOrigin(trash, entryName)
+  await trash.removeEntry(entryName, { recursive: true })
+  await pruneHistoryForDeleted([origin])
   notifyWorkspaceChanged('')
 }
 
@@ -796,11 +968,16 @@ export async function emptyTrash() {
     return { removed: 0 }
   }
   let removed = 0
+  const origins = []
   for await (const entry of trash.values()) {
+    origins.push(await readTrashOrigin(trash, entry.name))
     await trash.removeEntry(entry.name, { recursive: true })
     removed += 1
   }
-  if (removed) notifyWorkspaceChanged('')
+  if (removed) {
+    await pruneHistoryForDeleted(origins)
+    notifyWorkspaceChanged('')
+  }
   return { removed }
 }
 
@@ -815,6 +992,7 @@ export async function cleanupTrash() {
   }
   const deadline = Date.now() - TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000
   let removed = 0
+  const origins = []
   for await (const entry of trash.values()) {
     let at
     try {
@@ -823,11 +1001,15 @@ export async function cleanupTrash() {
       at = parseLegacyTrashName(entry.name).at
     }
     if (at && at < deadline) {
+      origins.push(await readTrashOrigin(trash, entry.name))
       await trash.removeEntry(entry.name, { recursive: true })
       removed += 1
     }
   }
-  if (removed) notifyWorkspaceChanged('')
+  if (removed) {
+    await pruneHistoryForDeleted(origins)
+    notifyWorkspaceChanged('')
+  }
   return { removed }
 }
 

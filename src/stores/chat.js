@@ -34,11 +34,15 @@ import {
   cloneMessagesForFork,
 } from '../utils/conversation'
 import { buildMainChatMemoryContext } from '../utils/memoryContext'
-import { buildToolPrompt, extractToolCalls, executeToolCall, stripToolBlocks, stripStreamingToolBlocks, createWriteBudget } from '../services/tools'
+import { buildToolPrompt, extractToolCalls, executeToolCall, stripToolBlocks, stripStreamingToolBlocks, createWriteBudget, toolUsageHint, shouldShowUsageHint, callSignature, describeCall, planCallBatches, archiveToolResults, toolResultBrief } from '../services/tools'
 import { beginWorkspaceTask } from '../services/workspaceActivity'
+import { refreshPreflightContext, getPreflightContext } from '../services/preflight'
 import { exportConversation, printConversation } from '../services/conversationExport'
 // 系统提示词文件（Vite 构建时内联，零延迟）
 import systemPromptRaw from '../../public/prompt/system.md?raw'
+
+// 回灌给模型的单条工具结果上限；超出必须显式标注，否则模型会把自己看到的半截当成全文
+const RESULT_CHARS_TO_MODEL = 8000
 
 export const useChatStore = defineStore('chat', () => {
   const conversation = ref(createConversation())
@@ -194,6 +198,7 @@ export const useChatStore = defineStore('chat', () => {
         }
       }
 
+      await refreshPreflightContext(settings)
       const systemPrompt = buildSystemPrompt()
       const historyForApi = historyForRequest.map(m => ({
         role: m.role,
@@ -307,6 +312,8 @@ export const useChatStore = defineStore('chat', () => {
       const MAX_TOOL_ROUNDS = settings.workModeEnabled ? 20 : settings.browserSkillEnabled ? 8 : 3
       const toolCallLimit = Math.max(1, Math.min(200, Number(settings.maxToolCallsPerRound) || 10))
       const writeBudget = createWriteBudget()
+      // 同一条回答里累计的失败指纹，用来打断「同一个错误调用反复发」的空转
+      const failedCalls = new Map()
 
       while (toolRounds < MAX_TOOL_ROUNDS) {
         const calls = extractToolCalls(fullContent, toolCallLimit)
@@ -336,28 +343,26 @@ export const useChatStore = defineStore('chat', () => {
         streamingThinking.value = ''
 
         const results = []
-        for (let index = 0; index < calls.length; index += 1) {
-          const call = calls[index]
-          if (controller.signal.aborted) break
-          roundPart.status = `正在执行 ${call.tool}（${index + 1}/${calls.length}）…`
-          streamingParts.value = parts.slice()
-          let result
+        const runOne = async (call, onStatus) => {
           try {
-            result = await executeToolCall(call, {
+            return await executeToolCall(call, {
               settings,
               signal: controller.signal,
               documentIds,
               budget: writeBudget,
-              onStatus: text => {
-                if (text) {
-                  roundPart.status = text
-                  streamingParts.value = parts.slice()
-                }
-              },
+              onStatus,
             })
           } catch (err) {
-            result = { ok: false, text: err?.message || String(err), record: `工具执行失败：${err?.message || err}` }
+            return {
+              ok: false,
+              refused: err?.code === 'WRITE_BUDGET',
+              text: err?.message || String(err),
+              record: `工具执行失败：${err?.message || err}`,
+            }
           }
+        }
+        // 无论串行还是并行，都按调用原顺序落账，步骤卡片与回灌顺序保持一致
+        const settleOne = ({ call, result }) => {
           results.push({ call, result })
           roundPart.steps.push({
             tool: call.tool,
@@ -371,10 +376,41 @@ export const useChatStore = defineStore('chat', () => {
             else toolImages.push(...result.images)
           }
           if (result.exportFormat) pendingExport = result.exportFormat
+        }
+
+        for (const batch of planCallBatches(calls)) {
+          if (controller.signal.aborted) break
+          if (batch.parallel && batch.items.length > 1) {
+            const names = batch.items.map(item => item.tool).join(' + ')
+            roundPart.status = `正在并行执行 ${names}（${batch.items.length} 个只读调用）…`
+            streamingParts.value = parts.slice()
+            const settled = await Promise.all(batch.items.map(call => runOne(call)))
+            batch.items.forEach((call, k) => settleOne({ call, result: settled[k] }))
+          } else {
+            const [call] = batch.items
+            roundPart.status = `正在执行 ${call.tool}（${batch.start + 1}/${calls.length}）…`
+            streamingParts.value = parts.slice()
+            const result = await runOne(call, text => {
+              if (text) {
+                roundPart.status = text
+                streamingParts.value = parts.slice()
+              }
+            })
+            settleOne({ call, result })
+          }
           streamingParts.value = parts.slice()
         }
         roundPart.running = false
         delete roundPart.status
+        // 与回灌给模型的口径一致：已用轮次和跨轮累计的写入额度都留痕
+        roundPart.used = {
+          rounds: toolRounds,
+          roundsTotal: MAX_TOOL_ROUNDS,
+          files: writeBudget.files,
+          filesTotal: writeBudget.maxFiles,
+          bytes: writeBudget.bytes,
+          bytesTotal: writeBudget.maxBytes,
+        }
         streamingParts.value = parts.slice()
 
         if (controller.signal.aborted) {
@@ -382,8 +418,29 @@ export const useChatStore = defineStore('chat', () => {
         }
 
         let resultsText = results
-          .map(({ call, result }) => `工具：${call.tool}\n状态：${result.ok ? '成功' : '失败'}\n${String(result.text || '').slice(0, 8000)}`)
+          .map(({ call, result }) => {
+            const body = String(result.text || '')
+            const shown = body.length > RESULT_CHARS_TO_MODEL
+              ? `${body.slice(0, RESULT_CHARS_TO_MODEL)}\n…（结果已截断，原文 ${body.length} 字符；不要把它当成全文，请缩小查询范围或提高 limit）`
+              : body
+            const hint = shouldShowUsageHint(call, result) ? `\n\n${toolUsageHint(call.tool)}` : ''
+            return `工具：${call.tool}\n状态：${result.ok ? '成功' : '失败'}\n${shown}${hint}`
+          })
           .join('\n\n')
+
+        for (const { call, result } of results) {
+          if (result.ok) continue
+          const key = callSignature(call)
+          failedCalls.set(key, (failedCalls.get(key) || 0) + 1)
+        }
+        const repeated = [...new Set(
+          results
+            .filter(({ call, result }) => !result.ok && failedCalls.get(callSignature(call)) >= 2)
+            .map(({ call }) => describeCall(call))
+        )]
+        if (repeated.length) {
+          resultsText += `\n\n以上这些调用已重复失败：${repeated.join('；')}。不要再发出同样的调用，请换工具或换参数；确实做不到时，直接向用户说明原因和已完成的部分。`
+        }
 
         const visionImages = results
           .filter(({ call }) => call.tool === 'browser')
@@ -398,17 +455,16 @@ export const useChatStore = defineStore('chat', () => {
         }
 
         toolMessages = [
-          ...toolMessages.map(message =>
-            message.toolResult && message.images ? { ...message, images: undefined } : message
-          ),
+          ...archiveToolResults(toolMessages),
           { role: 'assistant', content: previousContent },
           {
             role: 'user',
             content: `【工具执行结果】\n${resultsText}\n\n请基于以上真实结果继续回答。不要编造结果，也不要重复调用已经成功的工具。${
               isLastRound ? '这是最后一轮，请直接给出最终回答，不要再调用工具。' : '如仍需其他工具，可以继续调用。'
-            }`,
+            }\n（本轮之后还剩 ${Math.max(0, MAX_TOOL_ROUNDS - toolRounds)} 轮工具调用；${writeBudget.remainingText()}。）`,
             images: imagesForModel.length ? imagesForModel : undefined,
             toolResult: true,
+            toolBrief: toolResultBrief(toolRounds, results),
           },
         ]
 
@@ -1072,6 +1128,10 @@ export const useChatStore = defineStore('chat', () => {
 
     const toolPrompt = buildToolPrompt(settings)
     if (toolPrompt) parts.push(toolPrompt)
+
+    // 开工预取在发消息前已刷好快照，这里只读取（buildSystemPrompt 需保持同步）
+    const preflight = getPreflightContext()
+    if (preflight) parts.push(preflight)
 
     // 长期记忆：主记忆未禁用时生效，读取有上限
     const memory = useMemoryStore()

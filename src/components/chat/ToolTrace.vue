@@ -27,12 +27,14 @@
         <p v-if="round.error" class="trace-note fail">{{ round.error }}</p>
       </div>
     </div>
+    <p v-if="open && budgetLine" class="trace-budget">{{ budgetLine }}</p>
   </div>
 </template>
 
 <script setup>
 import { ref, computed } from 'vue'
 import MarkdownRenderer from '../common/MarkdownRenderer.vue'
+import { formatBytes } from '../../services/workspace'
 
 const props = defineProps({
   trace: { type: Array, default: () => [] },
@@ -56,6 +58,19 @@ const manualOpen = ref(null)
 const isRunning = computed(() => props.live || props.trace.some(round => round.running))
 const open = computed(() => (manualOpen.value === null ? isRunning.value : manualOpen.value))
 const stepCount = computed(() => props.trace.reduce((sum, round) => sum + (round.steps?.length || 0), 0))
+// 额度取最后一轮的快照：写入预算跨轮累计，最后一轮才是总量
+const used = computed(() => [...props.trace].reverse().find(round => round.used)?.used || null)
+const roundsText = computed(() => (used.value ? `${used.value.rounds}/${used.value.roundsTotal} 轮` : `${props.trace.length} 轮`))
+const budgetLine = computed(() => {
+  const info = used.value
+  if (!info) return ''
+  const leftBytes = Math.max(0, info.bytesTotal - info.bytes)
+  return [
+    `已用 ${info.rounds}/${info.roundsTotal} 轮`,
+    `写入 ${info.files}/${info.filesTotal} 个文件`,
+    `额度剩 ${formatBytes(leftBytes)}`,
+  ].join(' · ')
+})
 
 const headerText = computed(() => {
   if (!props.trace.length) return '执行过程'
@@ -67,7 +82,7 @@ const headerText = computed(() => {
     }
     return `执行过程 · ${stepCount.value} 步`
   }
-  return `执行过程 · ${props.trace.length} 轮 · ${stepCount.value} 步`
+  return `执行过程 · ${roundsText.value} · ${stepCount.value} 步`
 })
 
 function toggle() {
@@ -201,4 +216,13 @@ function toolLabel(tool) {
   color: var(--text-muted);
 }
 .trace-note.fail { color: var(--danger, #dc2626); }
+.trace-budget {
+  /* 贴在滚动区外面：步骤再多，额度也必须一眼可见 */
+  margin: 0;
+  padding: 6px 14px;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-sidebar);
+  font-size: 11px;
+  color: var(--text-muted);
+}
 </style>

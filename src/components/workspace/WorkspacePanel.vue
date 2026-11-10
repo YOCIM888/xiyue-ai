@@ -7,6 +7,15 @@
           <div class="ws-title">
             <h2>工作区</h2>
             <button
+              v-if="status.folderSupported"
+              class="view-btn"
+              title="挂载或更换本机文件夹，也可改回内置工作区"
+              @click="openMountMenu"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+              <span>文件</span>
+            </button>
+            <button
               class="view-btn"
               :class="{ active: view === 'trash' }"
               :title="`回收站（${TRASH_RETENTION_DAYS} 天自动清理）`"
@@ -53,7 +62,7 @@
                 <input
                   v-model="filter"
                   type="text"
-                  placeholder="过滤文件…（全工作区搜索）"
+                  :placeholder="searchScope === 'content' ? '搜索文件内容…' : '过滤文件…（全工作区）'"
                   spellcheck="false"
                   @input="onFilterInput"
                   @keydown.esc.prevent="clearFilter"
@@ -61,6 +70,15 @@
                 <button v-if="filter" class="ws-filter-clear" title="清空过滤" @click="clearFilter">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                 </button>
+              </div>
+              <div class="ws-scope" title="搜索范围：文件名或文件内容">
+                <button
+                  v-for="item in SCOPE_OPTIONS"
+                  :key="item.key"
+                  class="ws-scope-btn"
+                  :class="{ on: searchScope === item.key }"
+                  @click="setScope(item.key)"
+                >{{ item.label }}</button>
               </div>
               <button class="icon-btn sm" :disabled="!expanded.size" title="全部折叠" @click="collapseAll">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 11 12 6 7 11"/><polyline points="17 18 12 13 7 18"/></svg>
@@ -79,10 +97,12 @@
               />
               <WorkspaceFileViewer
                 v-else-if="preview"
+                :key="`${preview.path}:${preview.focusLine || 0}`"
                 class="ws-surface"
                 :path="preview.path"
                 :name="preview.name"
                 :entry="preview.entry"
+                :focus-line="preview.focusLine"
                 :ai-changed="isAiChanged(preview.path)"
                 :read-only="readOnly"
                 @close="preview = null"
@@ -92,17 +112,6 @@
               />
 
               <template v-else>
-                <div v-if="!searchMode && status.folderSupported" class="ws-mount">
-                  <span class="ws-mount-text">
-                    <template v-if="status.mode === 'folder'">本机文件夹「{{ status.folderName }}」</template>
-                    <template v-else>内置工作区 · 文件保存在浏览器中</template>
-                  </span>
-                  <span class="ws-mount-actions">
-                    <button class="btn-sm" @click="chooseFolder">{{ status.mode === 'folder' ? '更换文件夹' : '选择本机文件夹' }}</button>
-                    <button v-if="status.mode === 'folder'" class="btn-sm" @click="unmountFolder">改回内置工作区</button>
-                  </span>
-                </div>
-
                 <template v-if="searchMode">
                   <div v-if="searchError" class="ws-error">
                     <span>{{ searchError }}</span>
@@ -114,14 +123,38 @@
                   <template v-else-if="!searchResults.length">
                     <div class="ws-empty">
                       <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                      <p>没有匹配「{{ filter }}」的文件</p>
-                      <span>换个关键词试试，只匹配文件名</span>
+                      <p>没有匹配「{{ filter }}」的{{ contentMode ? '内容' : '文件' }}</p>
+                      <span>{{ contentMode ? '内容搜索只读文本文件，试试更短或更独特的关键词' : '换个关键词试试，只匹配文件名' }}</span>
                     </div>
                   </template>
                   <template v-else>
                     <p class="ws-search-meta">
-                      找到 {{ searchResults.length }} 项<template v-if="searchTruncated">（结果过多，仅显示前 {{ searchResults.length }} 项）</template>
+                      <template v-if="contentMode">命中 {{ hitRows.length }} 行 · {{ searchStats.filesMatched }} 个文件 · 扫描 {{ formatBytes(searchStats.scannedBytes) }}</template>
+                      <template v-else>找到 {{ searchResults.length }} 项</template>
+                      <template v-if="searchTruncated">（结果过多，仅显示前 {{ contentMode ? hitRows.length : searchResults.length }} 项）</template>
+                      <template v-if="contentMode && searchStats.oversizedSkipped">，跳过 {{ searchStats.oversizedSkipped }} 个超大文件</template>
                     </p>
+                    <div v-if="contentMode" class="ws-hits">
+                      <div
+                        v-for="hit in hitRows"
+                        :key="hit.key"
+                        class="ws-hit"
+                        :title="`${hit.path}:${hit.line}`"
+                        @click="openHit(hit)"
+                      >
+                        <div class="ws-hit-head">
+                          <span class="ws-hit-name">{{ hit.name }}</span>
+                          <span class="ws-hit-dir" :title="hit.path">{{ hit.dir }}</span>
+                          <span class="ws-hit-line">:{{ hit.line }}</span>
+                        </div>
+                        <p class="ws-hit-text">
+                          <template v-for="(part, index) in hit.parts" :key="index">
+                            <mark v-if="part.hit">{{ part.text }}</mark>
+                            <span v-else>{{ part.text }}</span>
+                          </template>
+                        </p>
+                      </div>
+                    </div>
                   </template>
                 </template>
 
@@ -322,17 +355,22 @@ import WorkspaceDiff from './WorkspaceDiff.vue'
 const WorkspaceFileViewer = defineAsyncComponent(() => import('./WorkspaceFileViewer.vue'))
 import {
   getWorkspaceStatus, pickWorkspaceFolder, clearWorkspaceFolder, ensureWorkspacePermission,
-  listDir, searchWorkspace, deletePath, getFileBlob, writeBlob, writeFile, statFile, makeDir,
+  listDir, searchWorkspace, searchFiles, deletePath, getFileBlob, writeBlob, writeFile, statFile, makeDir,
   renamePath, zipDirectory, zipFiles, importZip, formatBytes, sanitizeFileName,
   listTrash, restoreTrash, purgeTrash, emptyTrash, cleanupTrash,
   listHistory, getHistoryText, restoreHistory, getWorkspaceUsage,
 } from '../../services/workspace'
+import { splitByRange } from '../../utils/textSearch'
 import { getTaskArtifacts, isAiTouched, latestAiWriteAt } from '../../services/workspaceActivity'
 
 const TRASH_RETENTION_DAYS = 30
 const PANEL_WIDTH_KEY = 'xiyue_workspace_width'
 const EXPANDED_KEY = 'xiyue_workspace_expanded_v1'
 const MAX_EXPANDED = 60
+const SCOPE_OPTIONS = [
+  { key: 'name', label: '名称' },
+  { key: 'content', label: '内容' },
+]
 const ACTION_LABEL = {
   write: '写入', edit: '修改', append: '追加', mkdir: '新建目录',
   rename: '重命名', move: '移动', copy: '复制', delete: '删除',
@@ -388,10 +426,12 @@ const preview = ref(null)
 const diffTarget = ref(null)
 
 const filter = ref('')
+const searchScope = ref('name')
 const searchPending = ref(false)
 const searchResults = ref([])
 const searchTruncated = ref(false)
 const searchError = ref('')
+const searchStats = ref({ filesMatched: 0, scannedBytes: 0, oversizedSkipped: 0 })
 
 const treeNodes = reactive(new Map())
 const expanded = reactive(new Set(loadExpanded()))
@@ -435,6 +475,7 @@ const aiWriteTitle = computed(() => lastAiWriteAt.value
   : '')
 
 const searchMode = computed(() => !!filter.value.trim())
+const contentMode = computed(() => searchMode.value && searchScope.value === 'content')
 const rootNode = computed(() => treeNodes.get(''))
 const treeLoading = computed(() => {
   const node = rootNode.value
@@ -490,7 +531,19 @@ const searchRows = computed(() => searchResults.value.map(item => ({
   showPath: true,
   pseudo: false,
 })))
-const displayRows = computed(() => (searchMode.value ? searchRows.value : flatRows.value))
+const hitRows = computed(() => searchResults.value.map(item => ({
+  key: `${item.path}:${item.line}`,
+  path: item.path,
+  name: artifactName(item.path),
+  dir: shortDir(item.path),
+  line: item.line,
+  parts: splitByRange(item.text, item.range),
+})))
+// 内容命中用自己的行渲染，通用节点循环只在名称模式/目录树时出力
+const displayRows = computed(() => {
+  if (searchMode.value) return contentMode.value ? [] : searchRows.value
+  return flatRows.value
+})
 
 let changeTimer = null
 let highlightTimer = null
@@ -796,23 +849,51 @@ function onFilterInput() {
     return
   }
   searchPending.value = true
-  filterTimer = setTimeout(runSearch, 220)
+  filterTimer = setTimeout(runSearch, searchScope.value === 'content' ? 380 : 220)
+}
+
+function setScope(scope) {
+  if (searchScope.value === scope) return
+  searchScope.value = scope
+  searchResults.value = []
+  searchTruncated.value = false
+  searchError.value = ''
+  searchStats.value = { filesMatched: 0, scannedBytes: 0, oversizedSkipped: 0 }
+  clearTimeout(filterTimer)
+  if (filter.value.trim()) {
+    searchPending.value = true
+    runSearch()
+  }
 }
 
 async function runSearch() {
   const keyword = filter.value.trim()
+  const scope = searchScope.value
   if (!keyword) return
   searchPending.value = true
   searchError.value = ''
+  const fresh = () => filter.value.trim() === keyword && searchScope.value === scope
   try {
-    const result = await searchWorkspace(keyword)
-    if (filter.value.trim() !== keyword) return
-    searchResults.value = result.results
-    searchTruncated.value = result.truncated
+    if (scope === 'content') {
+      const result = await searchFiles({ query: keyword, ignoreCase: true })
+      if (!fresh()) return
+      searchResults.value = result.results
+      searchTruncated.value = result.truncated
+      searchStats.value = {
+        filesMatched: result.filesMatched,
+        scannedBytes: result.scannedBytes,
+        oversizedSkipped: result.oversizedSkipped,
+      }
+    } else {
+      const result = await searchWorkspace(keyword)
+      if (!fresh()) return
+      searchResults.value = result.results
+      searchTruncated.value = result.truncated
+    }
   } catch (err) {
-    searchError.value = err?.message || '搜索失败'
+    if (fresh()) searchError.value = err?.message || '搜索失败'
   } finally {
-    if (filter.value.trim() === keyword) searchPending.value = false
+    if (fresh()) searchPending.value = false
   }
 }
 
@@ -823,6 +904,7 @@ function clearFilter() {
   searchTruncated.value = false
   searchPending.value = false
   searchError.value = ''
+  searchStats.value = { filesMatched: 0, scannedBytes: 0, oversizedSkipped: 0 }
 }
 
 function onRowClick(row) {
@@ -841,6 +923,10 @@ function openFile(row) {
     name: row.name,
     entry: { size: row.size, modified: row.modified },
   }
+}
+
+function openHit(hit) {
+  preview.value = { path: hit.path, name: hit.name, entry: null, focusLine: hit.line }
 }
 
 function openDiff(row) {
@@ -887,6 +973,14 @@ function iconColor(row) {
 function parentDir(path) {
   const index = String(path).lastIndexOf('/')
   return index > 0 ? String(path).slice(0, index) : '工作区根目录'
+}
+
+/** 面板很窄，长路径只保留最后两级，前面用 … 提示还有更上层 */
+function shortDir(path) {
+  const dir = parentDir(path)
+  if (dir === '工作区根目录') return dir
+  const segments = dir.split('/')
+  return segments.length > 2 ? `…/${segments.slice(-2).join('/')}/` : `${dir}/`
 }
 
 function artifactName(path) {
@@ -1134,6 +1228,17 @@ function openRootMenu(event) {
   items.push({ label: '全部折叠', action: collapseAll })
   items.push({ label: '打包下载工作区', action: () => downloadZip('') })
   window.__ui?.showMenu(event.clientX, event.clientY, items)
+}
+
+function openMountMenu(event) {
+  const items = status.value.mode === 'folder'
+    ? [
+        { label: '更换文件夹…', action: chooseFolder },
+        { label: '改回内置工作区', action: unmountFolder },
+      ]
+    : [{ label: '选择本机文件夹…', action: chooseFolder }]
+  const rect = event.currentTarget.getBoundingClientRect()
+  window.__ui?.showMenu(rect.left, rect.bottom + 4, items)
 }
 
 function cleanRelativeName(input) {
@@ -1698,6 +1803,89 @@ onUnmounted(() => {
   background: var(--bg-hover);
   color: var(--text-primary);
 }
+.ws-scope {
+  display: flex;
+  flex-shrink: 0;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: var(--bg-card);
+}
+.ws-scope-btn {
+  padding: 2px 6px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: inherit;
+  line-height: 1.5;
+  cursor: pointer;
+}
+.ws-scope-btn:hover {
+  color: var(--text-primary);
+}
+.ws-scope-btn.on {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.ws-hits {
+  margin-top: 2px;
+}
+.ws-hit {
+  padding: 5px 8px 6px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.ws-hit:hover {
+  background: var(--bg-hover);
+}
+.ws-hit-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.ws-hit-name {
+  flex-shrink: 0;
+  max-width: 45%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+.ws-hit-dir {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.ws-hit-line {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--accent);
+}
+.ws-hit-text {
+  margin: 1px 0 0;
+  overflow: hidden;
+  white-space: pre;
+  text-overflow: ellipsis;
+  font-family: ui-monospace, SFMono-Regular, Consolas, 'Courier New', monospace;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+.ws-hit-text mark {
+  padding: 0 1px;
+  border-radius: 3px;
+  background: rgba(250, 204, 21, 0.45);
+  color: inherit;
+}
 .ws-scroll {
   flex: 1;
   min-height: 0;
@@ -1717,30 +1905,6 @@ onUnmounted(() => {
   flex-direction: column;
 }
 
-.ws-mount {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 2px 4px 8px;
-  padding: 9px 12px;
-  border: 1px dashed var(--border-color);
-  border-radius: 10px;
-  font-size: 12px;
-  color: var(--text-muted);
-}
-.ws-mount-text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ws-mount-actions {
-  display: flex;
-  gap: 6px;
-  flex-shrink: 0;
-}
 .ws-empty {
   text-align: center;
   color: var(--text-muted);
@@ -2229,18 +2393,22 @@ button.ai-badge:hover {
   color: var(--danger);
 }
 
+/* 默认宽 420：让「文件/回收站/产物」文字保持可见，图标彼此太像，只靠 tooltip 分不清；
+   空间不够时先牺牲标题，再牺牲文字 */
 @container (max-width: 430px) {
-  .view-btn span {
+  .ws-title h2 {
     display: none;
   }
   .ws-node-size {
     display: none;
   }
 }
-@container (max-width: 360px) {
-  .ws-title h2 {
+@container (max-width: 400px) {
+  .view-btn span {
     display: none;
   }
+}
+@container (max-width: 360px) {
   .ws-node-time {
     display: none;
   }
