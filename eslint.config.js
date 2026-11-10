@@ -29,7 +29,8 @@ export default [
     },
   },
   {
-    // previewBoot / previewModules 同理：和 previewPaths.js（去掉 export）以及配置常量包在同一个 IIFE 里注入预览 iframe
+    // previewBoot / previewModules 同理：和 previewPaths.js、previewAutomate.js（都去掉 export）
+    // 以及配置常量包在同一个 IIFE 里注入预览 iframe
     files: ['src/services/previewBoot.js', 'src/services/previewModules.js'],
     languageOptions: {
       globals: {
@@ -43,6 +44,7 @@ export default [
         mapModuleUrls: 'readonly',
         buildImportMap: 'readonly',
         loadPreviewModules: 'readonly',
+        installAutomation: 'readonly',
       },
     },
   },
@@ -52,6 +54,23 @@ export default [
       ecmaVersion: 'latest',
       sourceType: 'module',
       globals: { ...globals.node },
+    },
+  },
+  {
+    // 这几份用例在文件头声明了 @vitest-environment happy-dom，跑的时候有完整的 window / document；
+    // 其余用例仍是 node 环境，不给浏览器全局，写错了才报得出来
+    files: [
+      'tests/previewAutomate.test.js',
+      'tests/storeAssets.test.js',
+      'tests/storeChat.test.js',
+      'tests/storeDream.test.js',
+      'tests/storeMemory.test.js',
+      'tests/storeSettings.test.js',
+      'tests/storeStarry.test.js',
+      'tests/storeTopics.test.js',
+    ],
+    languageOptions: {
+      globals: { ...globals.node, ...globals.browser },
     },
   },
   {

@@ -7,6 +7,7 @@
  */
 import JSZip from 'jszip'
 import { idbGet, idbSet, idbDelete } from '../utils/idb'
+import { broadcastTab, onTabMessage } from './tabSync'
 import { createMatcher, findMatches, globToRegExp } from '../utils/textSearch'
 import { resolveAssetPath, mimeFromPath, rewriteCssUrls, rewriteSrcset } from '../utils/htmlInline'
 import {
@@ -61,10 +62,20 @@ let folderName = ''
 let initialized = false
 let opfsRoot = null
 
-/** 通知工作区面板与预览窗口文件已变化 */
+/** 通知工作区面板与预览窗口文件已变化，并告诉其他标签页 */
 export function notifyWorkspaceChanged(path = '') {
   window.dispatchEvent(new CustomEvent('xiyue:workspace-changed', { detail: { path } }))
+  broadcastTab('workspace', { path })
 }
+
+// 其他标签改了工作区：只派发本地事件让文件树/查看器/预览自己刷新，
+// 绝不能再走 notifyWorkspaceChanged，否则两个标签会互相广播到天荒地老
+onTabMessage((message) => {
+  if (message.type !== 'workspace') return
+  window.dispatchEvent(new CustomEvent('xiyue:workspace-changed', {
+    detail: { path: String(message.path || ''), remote: true, from: message.from },
+  }))
+})
 
 export function folderPickerSupported() {
   return typeof window.showDirectoryPicker === 'function'

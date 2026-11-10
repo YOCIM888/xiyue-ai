@@ -5,9 +5,10 @@
  * 读一次存储，脚本第一行就死、事件从未绑定——表现就是「界面能看、点什么都没反应」。
  * 这里用内存实现把它们兜住，并把 console 与错误回传宿主，让白屏变成可读的诊断信息。
  *
- * 宿主把 previewPaths.js（去掉 export 关键字）、previewModules.js 和本文件一起包进同一个 IIFE 注入，
- * 配置是同作用域的常量 __XIYUE_PREVIEW__，不往全局挂任何东西；
- * 末尾调用的 loadPreviewModules 来自 previewModules.js，负责 blob URL 与 importmap。
+ * 宿主把 previewPaths.js（去掉 export 关键字）、previewAutomate.js（同样去掉 export）、
+ * previewModules.js 和本文件一起包进同一个 IIFE 注入，配置是同作用域的常量 __XIYUE_PREVIEW__，
+ * 不往全局挂任何东西；末尾调用的 loadPreviewModules 来自 previewModules.js，负责 blob URL 与 importmap，
+ * installAutomation 来自 previewAutomate.js —— 它要在本文件的内层 IIFE 里调用才拿得到 report。
  * 每个 shim 独立 try/catch：shim 自身失败绝不能拖垮被预览的页面。
  * 本文件是经典脚本，不能出现 import / export，也不能出现字面量的 script 结束标签。
  */
@@ -179,6 +180,77 @@
     return true
   }
 
+  // ---- 页内导航与交互上报 ----
+
+  let touched = false
+
+  /**
+   * 只报第一次：宿主据此把「文件一变就整页重载」切成「标脏 + 手动重载」，别冲掉用户正在操作的状态。
+   * 合成事件不算 —— AI 自测点出来的 pointerdown 不该让页面转成「等人手动重载」，
+   * 那样它改完文件就再也看不到自己刚写的东西了。
+   */
+  function reportTouched(event) {
+    if (touched) return
+    if (event && event.isTrusted === false) return
+    touched = true
+    send({ kind: 'touched' })
+  }
+
+  /**
+   * 页内锚点自己滚。srcdoc 的文档地址是 about:srcdoc、基址却继承自宿主页面，
+   * 交给浏览器做默认行为，它会把整个 iframe 导航到宿主地址上，预览当场就没了。
+   */
+  function scrollToFragment(fragment) {
+    if (!fragment) {
+      window.scrollTo(0, 0)
+      return
+    }
+    let target
+    try {
+      target = document.getElementById(fragment) || document.querySelector(`[name="${CSS.escape(fragment)}"]`)
+    } catch {
+      return
+    }
+    target?.scrollIntoView()
+  }
+
+  function installNavigation() {
+    document.addEventListener('click', (event) => {
+      const link = event.target?.closest?.('a[href], area[href]')
+      if (!link) return
+      // 带修饰键是「另开一处」的意图，沙箱里本来也开不出去，交给浏览器自己处理
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+      // 只能用原始属性：a.href 是按 about:srcdoc 的基址解析出来的宿主地址，照着它走就跳错了
+      const raw = String(link.getAttribute('href') ?? '').trim()
+      // 外链与带协议的地址（javascript: / mailto: / data:）原样放行，拦错了就是「页面点不动」
+      if (isExternalUrl(raw)) return
+      event.preventDefault()
+      reportTouched(event)
+      if (!raw || raw.startsWith('#')) scrollToFragment(raw.slice(1))
+      else send({ kind: 'navigate', href: raw })
+    }, true)
+
+    document.addEventListener('submit', (event) => {
+      // 不 stopPropagation：页面自己的 submit 处理器还要跑，这里只是不让文档跳走
+      event.preventDefault()
+      reportTouched(event)
+      const raw = String(event.target?.getAttribute?.('action') ?? '').trim()
+      if (!raw || raw.startsWith('#') || isExternalUrl(raw)) {
+        report({ kind: 'log', level: 'warn', text: '表单提交已被拦下：预览里没有服务器，页面不会跳转（要发数据请用 fetch）' })
+        return
+      }
+      send({ kind: 'navigate', href: raw })
+    }, true)
+    return true
+  }
+
+  function installInteractionProbe() {
+    for (const type of ['pointerdown', 'keydown', 'input', 'change']) {
+      document.addEventListener(type, reportTouched, true)
+    }
+    return true
+  }
+
   // ---- 诊断回传 ----
 
   function installConsole() {
@@ -248,12 +320,16 @@
   install('cookie', installCookie)
   install('indexedDB', installIndexedDb)
   install('fetch', installFetch)
+  install('页内跳转', installNavigation)
+  install('interaction', installInteractionProbe, true)
+  // 自测通道必须在 ready 之前装好：宿主收到 ready 就会开始 ping，晚了它以为页面没起来
+  install('自测通道', () => installAutomation({ report }), true)
 
   if (failed.length) {
     report({
       kind: 'log',
       level: 'warn',
-      text: `预览环境未能接管：${failed.join('、')}（页面访问它们时仍会抛 SecurityError）`,
+      text: `预览环境未能接管：${failed.join('、')}（存储类仍会抛 SecurityError，页内跳转会真的跳走）`,
     })
   }
   send({ kind: 'ready', path: String(config.path || ''), shims: installed })

@@ -7,9 +7,16 @@ const SESSIONS_KEY = 'xiyue_dream_sessions'
 const CUSTOM_WORKS_KEY = 'xiyue_dream_custom_works'
 const FALLBACK_OPTIONS = ['先观察周围的情况', '寻找安全的出路', '冷静下来再决定']
 let storageWarnAt = 0
+let customSeq = 0
 
 function makeId(prefix = 'turn') {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+}
+
+// 同一毫秒里连建两部作品会撞 id，删其中一部会连带删掉另一部的存档
+function makeCustomWorkId() {
+  customSeq += 1
+  return `dream-custom-${Date.now()}-${customSeq}`
 }
 
 function notifyStorageError() {
@@ -114,7 +121,7 @@ function loadCustomWorks() {
           : []
         while (options.length < 3) options.push(FALLBACK_OPTIONS[options.length])
         return {
-          id: typeof item.id === 'string' && item.id ? item.id : `dream-custom-${Date.now()}`,
+          id: typeof item.id === 'string' && item.id ? item.id : makeCustomWorkId(),
           custom: true,
           title: String(item.title).trim(),
           mark: String(item.mark || item.title).trim().slice(0, 1) || '梦',
@@ -284,7 +291,7 @@ export const useDreamStore = defineStore('dream', () => {
       : []
     while (options.length < 3) options.push(FALLBACK_OPTIONS[options.length])
     const work = {
-      id: `dream-custom-${Date.now()}`,
+      id: makeCustomWorkId(),
       custom: true,
       title,
       mark: String(payload.mark || title).trim().slice(0, 1) || '梦',

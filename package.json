@@ -34,6 +34,7 @@
     "eslint": "^10.14.0",
     "eslint-plugin-vue": "^10.12.1",
     "globals": "^17.14.0",
+    "happy-dom": "^21.0.4",
     "vite": "^8.1.1",
     "vitest": "^5.1.0"
   }

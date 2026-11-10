@@ -1,6 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
-import { loadSettings, saveSettings } from '../utils/storage'
+import { KEYS, loadSettings, saveSettings } from '../utils/storage'
+import { onRemoteKeyChange } from '../utils/kv'
+import { createThrottle } from '../services/tabSync'
 
 const defaultSymbolRules = () => [
   { id: 'sym-paren-cn', open: '（', close: '）', color: '#000000', italic: false, bold: false },
@@ -257,6 +259,16 @@ export const useSettingsStore = defineStore('settings', () => {
   if (!('secondaryApiBase' in saved) || legacyPromptConfig || !skillsMigrated) {
     persist()
   }
+
+  // 设置的每个字段各有自己的取值范围与旧档迁移规则（clamp、matchMedia 兜底、技能默认放开），
+  // 就地覆盖很容易和上面那套初始化逻辑走偏，所以只提示、不偷偷换掉正在用的配置
+  const notifyRemoteSettings = createThrottle(8000)
+  onRemoteKeyChange((key) => {
+    if (key !== KEYS.SETTINGS) return
+    if (notifyRemoteSettings()) {
+      window.__ui?.showToast('另一个标签页改了设置，本页仍在用旧配置，刷新后生效', 'info', 6000)
+    }
+  })
 
   return {
     apiKey, apiBase, model, temperature, maxTokens, contextLength, topP, personaPrompt, userName, userPersona, replyRules, replyRulesEnabled, thinkingEnabled, reasoningEffort, maxToolCallsPerRound, userAvatar, personaEnabled, darkMode, linkSkillEnabled,

@@ -80,6 +80,9 @@
                   @click="setScope(item.key)"
                 >{{ item.label }}</button>
               </div>
+              <button v-if="!readOnly" class="icon-btn sm" title="用模板新建项目（静态站 / Vue / React）" @click="openTemplateMenu">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+              </button>
               <button class="icon-btn sm" :disabled="!expanded.size" title="全部折叠" @click="collapseAll">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 11 12 6 7 11"/><polyline points="17 18 12 13 7 18"/></svg>
               </button>
@@ -339,8 +342,10 @@
     </aside>
   </div>
 
+  <!-- :key 让换页时整份重建：currentPath 只在挂载时从 props 取一次，复用实例会停在上一个页面 -->
   <WorkspacePreview
     v-if="webPreview"
+    :key="webPreview.path"
     :path="webPreview.path"
     :name="webPreview.name"
     @close="webPreview = null"
@@ -348,7 +353,7 @@
 </template>
 
 <script setup>
-import { computed, defineAsyncComponent, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import WorkspacePreview from './WorkspacePreview.vue'
 import WorkspaceDiff from './WorkspaceDiff.vue'
 // 查看器体积较大且只在打开文件时需要，按需加载
@@ -362,6 +367,8 @@ import {
 } from '../../services/workspace'
 import { splitByRange } from '../../utils/textSearch'
 import { getTaskArtifacts, isAiTouched, latestAiWriteAt } from '../../services/workspaceActivity'
+import { PROJECT_TEMPLATES, scaffoldProject } from '../../services/projectTemplates'
+import { previewRequest } from '../../services/previewSession'
 
 const TRASH_RETENTION_DAYS = 30
 const PANEL_WIDTH_KEY = 'xiyue_workspace_width'
@@ -1126,6 +1133,18 @@ function openWebPreviewPath(path, name) {
   webPreview.value = { path, name }
 }
 
+/**
+ * preview 工具要验收页面时会请求打开抽屉，所以面板收着也要先展开：
+ * 自测回路的意义就是模型自己点一遍，不能指望用户刚好把预览开着。
+ * 只读模式（文件夹没授权）下不开 —— 那边读不到文件，打开了也只是一屏报错。
+ */
+watch(previewRequest, async (request) => {
+  const path = String(request?.path || '')
+  if (!path || readOnly.value) return
+  if (!isOpen.value) await open()
+  openWebPreviewPath(path, request.name || path.split('/').pop())
+})
+
 function saveBlob(blob, filename) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
@@ -1247,6 +1266,35 @@ function cleanRelativeName(input) {
     .map(seg => sanitizeFileName(seg, ''))
     .filter(seg => seg && seg !== '.' && seg !== '..')
     .join('/')
+}
+
+function openTemplateMenu(event) {
+  const rect = event.currentTarget.getBoundingClientRect()
+  window.__ui?.showMenu(rect.right - 170, rect.bottom + 4, PROJECT_TEMPLATES.map(template => ({
+    label: template.label,
+    action: () => createProjectFrom(template),
+  })))
+}
+
+async function createProjectFrom(template) {
+  if (readOnly.value) {
+    toastReadOnly()
+    return
+  }
+  const input = await window.__ui?.showPrompt(`用「${template.label}」模板新建项目：${template.description}`, {
+    value: template.dir,
+    confirmText: '生成',
+  })
+  if (!input) return
+  try {
+    const result = await scaffoldProject(template.id, input)
+    await revealPath(result.entry)
+    window.__ui?.showToast(`已生成 ${result.dir}/，共 ${result.paths.length} 个文件`, 'success', 2800)
+    // 生成完直接开预览：模板的意义就是「新建 → 能跑」，让人当场看见它在动
+    openWebPreviewPath(result.entry, 'index.html')
+  } catch (err) {
+    reportError(err, '生成项目失败')
+  }
 }
 
 async function createFileIn(dir) {

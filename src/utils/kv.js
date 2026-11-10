@@ -1,6 +1,7 @@
 // 统一存储层：IndexedDB 为主库，localStorage 只保留小配置与迁移标记。
 // 对外保持同步读写（内存缓存），写入异步入库，避免主线程阻塞。
-import { idbClear, idbDelete, idbGetAll, idbSet, isIDBSupported } from './idb'
+import { idbClear, idbDelete, idbGet, idbGetAll, idbSet, isIDBSupported } from './idb'
+import { broadcastTab, onTabMessage } from '../services/tabSync'
 
 const MIGRATED_KEY = 'xiyue_storage_migrated_v1'
 const AUTO_BACKUP_PREFIX = 'xiyue_auto_backup_'
@@ -202,18 +203,22 @@ export function setItem(key, value) {
 
   if (engine === 'local' || LOCAL_KEYS.has(key)) {
     safeLocalSet(key, str)
-    return
+    broadcastTab('kv', { key })
+  } else {
+    // 广播必须排在落库之后：别的标签一收到就会回读 IndexedDB，
+    // 抢在写入提交前发出去，它读到的是旧值，还会把旧值缓存下来再也不刷新
+    enqueue(() => idbSet(key, str).then(() => { broadcastTab('kv', { key }) }), key)
   }
-  enqueue(() => idbSet(key, str), key)
 }
 
 export function removeItem(key) {
   cache.delete(key)
   if (engine === 'local' || LOCAL_KEYS.has(key)) {
     try { localStorage.removeItem(key) } catch { /* ignore */ }
-    return
+    broadcastTab('kv', { key, removed: true })
+  } else {
+    enqueue(() => idbDelete(key).then(() => { broadcastTab('kv', { key, removed: true }) }), key)
   }
-  enqueue(() => idbDelete(key), key)
 }
 
 export function keys() {
@@ -326,6 +331,52 @@ export async function clearAppData() {
   }
   await flushStorage()
 }
+
+// ---- 跨标签同步 ----
+
+const remoteHandlers = new Set()
+
+/**
+ * 别的标签写了某个键：回到权威数据源重读，刷新本标签的内存缓存，再通知订阅方重新装载。
+ * 不能直接用广播里的值——那会把几 MB 的会话正文克隆一遍，而且 IDB 才是准的。
+ */
+async function applyRemoteKv(key, removed) {
+  try {
+    if (removed) {
+      cache.delete(key)
+    } else if (engine === 'local' || LOCAL_KEYS.has(key)) {
+      const local = localStorage.getItem(key)
+      if (local === null) cache.delete(key)
+      else cache.set(key, local)
+    } else {
+      const fresh = await idbGet(key)
+      if (fresh === null || fresh === undefined) cache.delete(key)
+      else cache.set(key, String(fresh))
+    }
+  } catch (err) {
+    console.warn('[storage] 同步其他标签页的改动失败', err)
+    return
+  }
+  for (const handler of remoteHandlers) {
+    try { handler(key, removed) } catch { /* 单个订阅者出错不该拖垮其他同步 */ }
+  }
+}
+
+/**
+ * 订阅「其他标签页改了某个键」。回调执行时 getItem 读到的已经是新值。
+ * @param {(key: string, removed: boolean) => void} handler
+ * @returns {() => void} 取消订阅
+ */
+export function onRemoteKeyChange(handler) {
+  if (typeof handler !== 'function') return () => {}
+  remoteHandlers.add(handler)
+  return () => { remoteHandlers.delete(handler) }
+}
+
+onTabMessage((message) => {
+  if (message.type !== 'kv' || typeof message.key !== 'string') return
+  applyRemoteKv(message.key, !!message.removed)
+})
 
 // 页面隐藏/关闭前尽量把排队的写入落库
 if (typeof document !== 'undefined') {

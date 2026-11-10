@@ -1,18 +1,20 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { loadTopics, saveTopics } from '../utils/storage'
-import { removeItem } from '../utils/kv'
+import { KEYS, loadTopics, saveTopics } from '../utils/storage'
+import { onRemoteKeyChange, removeItem } from '../utils/kv'
+import { createThrottle } from '../services/tabSync'
 
 let nextId = Date.now()
+
+/** 挑最近改动的那个话题，初始化与跨标签同步后都要用同一套规则 */
+function newestTopicId(list) {
+  return list.length ? list.reduce((a, b) => (b.updatedAt > a.updatedAt ? b : a)).id : null
+}
 
 export const useTopicsStore = defineStore('topics', () => {
   const topics = ref(loadTopics() || [])
   // 默认进入最新对话
-  const currentTopicId = ref(
-    topics.value.length
-      ? topics.value.reduce((a, b) => (b.updatedAt > a.updatedAt ? b : a)).id
-      : null
-  )
+  const currentTopicId = ref(newestTopicId(topics.value))
 
   const currentTopic = computed(() =>
     topics.value.find(t => t.id === currentTopicId.value) ?? null
@@ -89,6 +91,17 @@ export const useTopicsStore = defineStore('topics', () => {
       id: t.id, title: t.title, pinned: t.pinned, createdAt: t.createdAt, updatedAt: t.updatedAt,
     })))
   }
+
+  // 别的标签改了会话列表就重新装载：persist 写的是整份数组，
+  // 不跟着更新的话，本标签下一次改名/置顶就会用旧列表把对方的改动整份盖掉
+  const notifyRemote = createThrottle(4000)
+  onRemoteKeyChange((key, removed) => {
+    if (key !== KEYS.TOPICS || removed) return
+    const fresh = loadTopics() || []
+    topics.value = fresh
+    if (!fresh.some(t => t.id === currentTopicId.value)) currentTopicId.value = newestTopicId(fresh)
+    if (notifyRemote()) window.__ui?.showToast('另一个标签页更新了会话列表，已同步到这里', 'info', 3600)
+  })
 
   return {
     topics, currentTopicId, currentTopic, sortedTopics,

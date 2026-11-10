@@ -133,8 +133,8 @@ import { estimateMessagesTokens, estimatePartsTokens, estimateTokens } from '../
 import ContextRing from '../common/ContextRing.vue'
 import { matchSlashCommands, parseSlashInput, SLASH_COMMANDS } from '../../services/slashCommands'
 import { exportConversation, printConversation } from '../../services/conversationExport'
+import { chatDraft, takeChatDraft } from '../../services/chatDraft'
 import { analyzeTable } from '../../services/sandbox'
-import mammoth from 'mammoth'
 
 const DOC_MAX_SELECTION = 3
 const OCR_MAX_UPLOAD = 6
@@ -247,6 +247,26 @@ function onDocumentMousedown(e) {
 
 onMounted(() => document.addEventListener('mousedown', onDocumentMousedown))
 onUnmounted(() => document.removeEventListener('mousedown', onDocumentMousedown))
+
+/**
+ * 预览抽屉的「发给 AI 修」把整理好的中文描述存进草稿。
+ * immediate：从别的路由跳过来时组件才刚挂载，草稿已经在等着了。
+ * 已有输入就追加 —— 用户正在打的字不能被覆盖。
+ */
+watch(chatDraft, () => {
+  const text = takeChatDraft()
+  if (!text) return
+  input.value = input.value.trim() ? `${input.value.trimEnd()}\n\n${text}` : text
+  slashOpen.value = false
+  nextTick(() => {
+    const el = textareaRef.value
+    if (!el) return
+    el.focus()
+    el.setSelectionRange(el.value.length, el.value.length)
+    autoResize()
+  })
+  window.__ui?.showToast('预览报错已整理到输入框', 'success')
+}, { immediate: true })
 
 // ---- /导出：导出当前对话 ----
 const showExportPicker = ref(false)
@@ -597,6 +617,8 @@ async function addTextFile(file) {
   try {
     let text = ''
     if (ext === 'docx') {
+      // mammoth 只在真拖入 docx 时才用得上，别留在首屏包里
+      const mammoth = (await import('mammoth')).default
       const buf = await file.arrayBuffer()
       text = (await mammoth.extractRawText({ arrayBuffer: buf })).value
     } else if (ext === 'xlsx') {

@@ -8,6 +8,13 @@
 export const PREVIEW_MESSAGE = 'xiyue-preview'
 /** 宿主 → 预览 iframe，只用于应答 fetch */
 export const PREVIEW_REPLY = 'xiyue-preview-reply'
+/**
+ * 宿主 → 预览 iframe 的自测指令，以及它的应答。
+ * 必须和上面那对分开：fetch 用自增 id 在 boot 的 pending 表里配对，
+ * 指令应答混进去会被当成某个 fetch 的结果吃掉，两边一起卡死。
+ */
+export const PREVIEW_COMMAND = 'xiyue-preview-command'
+export const PREVIEW_COMMAND_REPLY = 'xiyue-preview-command-reply'
 
 export const PREVIEW_LEVELS = ['log', 'info', 'warn', 'error', 'debug']
 

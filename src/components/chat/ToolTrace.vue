@@ -46,6 +46,7 @@ const TOOL_LABELS = {
   read_document: '读取文档',
   browser: '浏览器',
   files: '文件操作',
+  preview: '预览验收',
   calculate: '本地计算',
   draw_chart: '绘制图表',
   generate_image: '生成图片',

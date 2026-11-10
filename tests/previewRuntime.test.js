@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
+import previewAutomateRaw from '../src/services/previewAutomate.js?raw'
 import previewBootRaw from '../src/services/previewBoot.js?raw'
 import previewModulesRaw from '../src/services/previewModules.js?raw'
 import previewPathsRaw from '../src/services/previewPaths.js?raw'
-import { buildRuntimeScript } from '../src/services/previewRuntime'
+import { buildFixRequest, buildRuntimeScript, normalizeAutomateResult, resolveNavPath } from '../src/services/previewRuntime'
 import {
   buildImportMap, cdnModuleUrl, formatPreviewArg, inlineLangExtension, isExternalUrl,
   mapModuleUrls, mergeImportMaps, normalizePreviewEntry, parseImportMap, PREVIEW_CDN_BASE,
@@ -45,10 +46,55 @@ describe('注入前提', () => {
     expect(previewModulesRaw).toContain('function loadPreviewModules(')
   })
 
-  it('三段源码拼进同一个 IIFE 后仍能编译：顶层声明没有互相撞车', async () => {
+  it('自测层只用 export const / export function，去掉关键字即可当经典脚本', () => {
+    const exportLines = previewAutomateRaw.split('\n').filter(line => /^export\b/.test(line))
+    expect(exportLines.length).toBeGreaterThan(0)
+    for (const line of exportLines) {
+      expect(line).toMatch(/^export (?:const [A-Za-z0-9_]+ =|function [A-Za-z0-9_]+\()/)
+    }
+    const classic = previewAutomateRaw.replace(/^export\s+/gm, '')
+    expect(classic).not.toMatch(/^export\b/m)
+    expect(classic).not.toMatch(/^\s*import\s/m)
+    expect(classic.toLowerCase()).not.toContain(SCRIPT_CLOSE)
+    expect(classic).toContain('function installAutomation(')
+    expect(classic).toContain('function collectSnapshot(')
+  })
+
+  /**
+   * 四段源码在同一个 IIFE 作用域里，顶层同名就是 SyntaxError，整个预览当场死掉。
+   * 除了 new Function 编译，这里再直接把名字列出来对一遍：编译只在拼完之后才报错，
+   * 名字对不上时看不出是谁撞了谁。
+   */
+  it('四段源码拼进同一个 IIFE 后仍能编译：顶层声明没有互相撞车', async () => {
     const script = await buildRuntimeScript('sub/page.html', bundleOptions())
     // new Function 只编译不执行，重复的顶层 const / function 会在这里变成 SyntaxError
     expect(() => new Function(script)).not.toThrow()
+
+    const topLevelNames = raw => [...raw.matchAll(/^(?:export\s+)?(?:const|let|var|function|async function|class)\s+([A-Za-z_$][\w$]*)/gm)]
+      .map(hit => hit[1])
+    const automate = new Set(topLevelNames(previewAutomateRaw))
+    expect(automate.size).toBeGreaterThan(10)
+    for (const name of [...topLevelNames(previewPathsRaw), ...topLevelNames(previewModulesRaw)]) {
+      expect(automate.has(name), `${name} 和别的注入文件重名了`).toBe(false)
+    }
+  })
+
+  it('自测层排在引导脚本前面：installAutomation 要在 boot 的内层 IIFE 里被调用', async () => {
+    const script = await buildRuntimeScript('sub/page.html')
+    const declareAt = script.indexOf('function installAutomation(')
+    const callAt = script.indexOf("install('自测通道'")
+    expect(declareAt).toBeGreaterThan(-1)
+    expect(callAt).toBeGreaterThan(declareAt)
+    expect(previewBootRaw).toContain('installAutomation({ report })')
+    // 必须在 ready 之前：宿主收到 ready 就会开始 ping，装晚了它以为页面没起来
+    expect(previewBootRaw.indexOf("install('自测通道'")).toBeLessThan(previewBootRaw.indexOf("send({ kind: 'ready'"))
+  })
+
+  it('合成事件不算用户交互：AI 自测点过之后文件一变还得能自动重载', () => {
+    expect(previewBootRaw).toContain('function reportTouched(event)')
+    expect(previewBootRaw).toContain('if (event && event.isTrusted === false) return')
+    expect(previewBootRaw).toContain("send({ kind: 'touched' })")
+    expect(previewBootRaw).toMatch(/reportTouched\(event\)/)
   })
 })
 
@@ -350,5 +396,176 @@ describe('mapModuleUrls', () => {
   it('一条栈里的多个 blob 帧各自换回源文件', () => {
     const text = 'Error: x\n    at f (blob:https://a/u1:3:1)\n    at g (blob:https://a/u2:9:2)'
     expect(mapModuleUrls(text, paths)).toBe('Error: x\n    at f (sub/app.ts:3:1)\n    at g (lib.js:9:2)')
+  })
+})
+
+describe('页内导航的拦截', () => {
+  it('捕获阶段拦下 <a> 点击与表单提交，上报的是原始属性值', () => {
+    expect(previewBootRaw).toContain("document.addEventListener('click'")
+    expect(previewBootRaw).toContain("document.addEventListener('submit'")
+    expect(previewBootRaw).toContain("send({ kind: 'navigate', href: raw })")
+    // srcdoc 的 baseURI 是 about:srcdoc，a.href / form.action 解析出来的是废地址
+    expect(previewBootRaw).toContain("link.getAttribute('href')")
+    expect(previewBootRaw).toContain("event.target?.getAttribute?.('action')")
+  })
+
+  it('只有外链与带修饰键的点击放行：拦错了就是页面点不动', () => {
+    expect(previewBootRaw).toContain('isExternalUrl(raw)')
+    expect(previewBootRaw).toContain('event.metaKey || event.ctrlKey')
+  })
+
+  it('锚点在页内自己滚，不能让默认行为把 iframe 导航到宿主地址上', () => {
+    expect(previewBootRaw).toContain("if (!raw || raw.startsWith('#')) scrollToFragment(raw.slice(1))")
+    expect(previewBootRaw).toContain('document.getElementById(fragment)')
+    expect(previewBootRaw).toContain('target?.scrollIntoView()')
+    expect(previewBootRaw).toContain('window.scrollTo(0, 0)')
+  })
+
+  it('表单不会跳走，但页面自己的 submit 处理器仍能跑', () => {
+    expect(previewBootRaw).toContain('event.preventDefault()')
+    expect(previewBootRaw).not.toContain('event.stopPropagation()')
+  })
+
+  it('首次交互只上报一次，宿主据此把自动重载切成脏标记', () => {
+    expect(previewBootRaw).toContain("send({ kind: 'touched' })")
+    expect(previewBootRaw).toContain('if (touched) return')
+    expect(previewBootRaw).toContain("['pointerdown', 'keydown', 'input', 'change']")
+  })
+})
+
+describe('resolveNavPath', () => {
+  it('相对地址按当前页所在目录解析成工作区路径', () => {
+    expect(resolveNavPath(['sub'], 'page.html')).toBe('sub/page.html')
+    expect(resolveNavPath(['sub'], '../root.html')).toBe('root.html')
+    expect(resolveNavPath([], '/abs.html')).toBe('abs.html')
+    expect(resolveNavPath(['sub'], 'page.html?id=3#top')).toBe('sub/page.html')
+    expect(resolveNavPath(['sub'], 'PAGE.HTM')).toBe('sub/PAGE.HTM')
+  })
+
+  it('外链、锚点、非 .html 与越出根目录的地址返回 null，由调用方说明原因', () => {
+    expect(resolveNavPath(['sub'], 'https://example.com/a.html')).toBeNull()
+    expect(resolveNavPath(['sub'], '//cdn.example.com/a.html')).toBeNull()
+    expect(resolveNavPath(['sub'], '#top')).toBeNull()
+    expect(resolveNavPath(['sub'], 'style.css')).toBeNull()
+    expect(resolveNavPath(['sub'], '../../escape.html')).toBeNull()
+    expect(resolveNavPath(['sub'], '')).toBeNull()
+  })
+})
+
+describe('buildFixRequest', () => {
+  const entries = [
+    { level: 'info', text: '已加载 3 个模块', source: '' },
+    { level: 'warn', text: 'qa-preview/App.vue：<style> ×1（样式被丢弃）', source: '' },
+    { level: 'error', text: 'Error: boom\n    at run (qa-preview/main.ts:6:1)', source: 'qa-preview/main.ts:6:1' },
+    { level: 'error', text: 'Error: 读不到 config', source: 'qa-preview/store.ts:12:3' },
+  ]
+
+  it('只挑错误，带上源文件位置，多行栈压成一行', () => {
+    const text = buildFixRequest({ path: 'qa-preview/index.html', entries })
+    expect(text).toContain('预览工作区里的 qa-preview/index.html 时控制台报错')
+    expect(text).toContain('1. qa-preview/main.ts:6:1 —— Error: boom at run (qa-preview/main.ts:6:1)')
+    expect(text).toContain('2. qa-preview/store.ts:12:3 —— Error: 读不到 config')
+    expect(text).not.toContain('已加载 3 个模块')
+  })
+
+  it('涉及文件去掉行列号并去重', () => {
+    const text = buildFixRequest({
+      path: 'a.html',
+      entries: [
+        { level: 'error', text: 'x', source: 'sub/a.ts:1:2' },
+        { level: 'error', text: 'y', source: 'sub/a.ts:9:9' },
+      ],
+    })
+    expect(text).toContain('涉及文件：sub/a.ts\n')
+  })
+
+  it('错误与文件都有上限，超出部分说清数量', () => {
+    const many = Array.from({ length: 11 }, (_, index) => ({
+      level: 'error',
+      text: `err ${index}`,
+      source: `f${index}.ts:1:1`,
+    }))
+    const text = buildFixRequest({ path: 'a.html', entries: many })
+    expect(text).toContain('8. f7.ts:1:1 —— err 7')
+    expect(text).not.toContain('err 8')
+    expect(text).toContain('另有 3 条没有列出')
+    expect(text).toContain('涉及文件：f0.ts、f1.ts、f2.ts、f3.ts、f4.ts、f5.ts\n')
+  })
+
+  it('没有错误时退回警告，什么都没有就返回空串', () => {
+    const warns = buildFixRequest({ path: 'a.html', entries: [{ level: 'warn', text: '样式被丢弃', source: '' }] })
+    expect(warns).toContain('1. 样式被丢弃')
+    expect(buildFixRequest({ path: 'a.html', entries: [{ level: 'info', text: 'ok', source: '' }] })).toBe('')
+    expect(buildFixRequest({ path: 'a.html' })).toBe('')
+  })
+
+  it('输出是给人读的中文描述，不是原始 JSON', () => {
+    const text = buildFixRequest({ path: 'a.html', entries })
+    expect(text).not.toContain('"level"')
+    expect(text).not.toContain('[{')
+    expect(text).toContain('（以上来自工作区预览控制台，行号已按 sourcemap 换回源文件）')
+  })
+})
+
+describe('chatDraft', () => {
+  it('草稿只投递一次：取走即清空，重复挂载不会再塞一遍', async () => {
+    const { chatDraft, requestChatDraft, takeChatDraft } = await import('../src/services/chatDraft')
+    expect(requestChatDraft('   ')).toBe(false)
+    expect(requestChatDraft(' 请修这个错误 ')).toBe(true)
+    expect(chatDraft.value).toBe('请修这个错误')
+    expect(takeChatDraft()).toBe('请修这个错误')
+    expect(chatDraft.value).toBe('')
+    expect(takeChatDraft()).toBe('')
+  })
+})
+
+describe('normalizeAutomateResult', () => {
+  it('只挑认识的字段：预览页里的代码也能伪造应答，结构一律不透传', () => {
+    const result = normalizeAutomateResult({
+      ok: true,
+      action: 'click',
+      target: '[3] button "登录"',
+      message: '已点击',
+      title: '登录页',
+      viewport: '1440x900',
+      scrollY: 120,
+      refCount: 8,
+      evil: '<img src=x onerror=alert(1)>',
+      nested: { deep: true },
+      proto: '__proto__',
+    })
+    expect(result).toEqual({
+      ok: true,
+      action: 'click',
+      target: '[3] button "登录"',
+      message: '已点击',
+      title: '登录页',
+      viewport: '1440x900',
+      scrollY: 120,
+      refCount: 8,
+    })
+    expect(Object.keys(result)).not.toContain('evil')
+  })
+
+  it('ok 只认真正的 true，其余一律当失败', () => {
+    expect(normalizeAutomateResult({ ok: true }).ok).toBe(true)
+    expect(normalizeAutomateResult({ ok: 'true' }).ok).toBe(false)
+    expect(normalizeAutomateResult({ ok: 1 }).ok).toBe(false)
+    expect(normalizeAutomateResult(null).ok).toBe(false)
+  })
+
+  it('快照文本单独限字数，长消息与长 target 也要裁', () => {
+    const long = normalizeAutomateResult({ ok: true, action: 'read', text: 'x'.repeat(40000) })
+    expect(long.text).toHaveLength(12000)
+    const chatty = normalizeAutomateResult({ ok: false, action: 'read', message: 'y'.repeat(2000), target: 'z'.repeat(900) })
+    expect(chatty.message.length).toBeLessThanOrEqual(401)
+    expect(chatty.target.length).toBeLessThanOrEqual(201)
+  })
+
+  it('数字字段要收敛：NaN、负数、超大 refCount 都不能带进模型上下文', () => {
+    expect(normalizeAutomateResult({ ok: true, scrollY: 'abc' }).scrollY).toBeUndefined()
+    expect(normalizeAutomateResult({ ok: true, scrollY: -40 }).scrollY).toBe(0)
+    expect(normalizeAutomateResult({ ok: true, refCount: 1e9 }).refCount).toBe(9999)
+    expect(normalizeAutomateResult({ ok: true, truncated: 'yes' }).truncated).toBeUndefined()
   })
 })
