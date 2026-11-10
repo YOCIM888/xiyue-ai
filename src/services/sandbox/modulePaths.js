@@ -147,6 +147,12 @@ export function isBareSpecifier(specifier) {
   return isBare(specifier)
 }
 
+/** 带协议或协议相对的绝对地址：不是工作区路径，浏览器自己会去取 */
+export function isUrlSpecifier(specifier) {
+  const spec = String(specifier ?? '').trim()
+  return /^[a-z][a-z0-9+.-]*:/i.test(spec) || spec.startsWith('//')
+}
+
 /**
  * 从字符串字面量位置回溯，判断它是不是模块 specifier。
  * 规则：紧邻的前一个有意义词是 from / import，或前一个非空字符是 ( 且再往前是 import。

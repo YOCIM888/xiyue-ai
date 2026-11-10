@@ -31,11 +31,15 @@ async function readVendor(path) {
 const compileCache = new Map()
 
 /**
- * @param {string} entry  入口文件路径（.js/.ts/.tsx/.jsx/.vue/.json，与 code 二选一）
- * @param {string} code   内联入口代码（只支持 JS）
- * @param {string[]} deps 额外预加载的模块路径
+ * @param {string} entry  入口文件路径（.js/.ts/.tsx/.jsx/.vue/.json）
+ * @param {string} code   单个内联入口代码（挂在工作区根目录，只支持 JS）
+ * @param {Array<{path: string, text: string}>} inline 多个内联模块，路径含宿主文档所在目录
+ * @param {string[]} deps 额外进图的模块路径
+ * @param {boolean} allowBare 裸模块名与绝对地址原样保留（预览用 importmap 指到 CDN）
  */
-export function collectModules({ entry = '', code = '', deps = [], maxFiles, maxBytes, onStatus } = {}) {
+export function collectModules({
+  entry = '', code = '', inline = [], deps = [], allowBare = false, maxFiles, maxBytes, onStatus,
+} = {}) {
   const io = { listFiles, readText, readVendor, compile: createCompiler({ onStatus, cache: compileCache }) }
-  return buildGraph({ io, entry, code, deps, maxFiles, maxBytes })
+  return buildGraph({ io, entry, code, inline, deps, allowBare, maxFiles, maxBytes })
 }

@@ -63,6 +63,7 @@
           </div>
           <iframe
             v-else
+            ref="previewFrame"
             class="wsv-frame"
             :srcdoc="srcdoc"
             sandbox="allow-scripts allow-forms allow-modals allow-popups allow-downloads"
@@ -81,6 +82,7 @@
         </div>
         <iframe
           v-else
+          ref="previewFrame"
           class="wsv-frame"
           :srcdoc="srcdoc"
           sandbox="allow-scripts allow-forms allow-modals allow-popups allow-downloads"
@@ -128,12 +130,14 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import hljs from 'highlight.js'
 import MarkdownRenderer from '../common/MarkdownRenderer.vue'
 import {
-  readFile, getFileBlob, buildPreviewHtml, formatBytes, sanitizeFileName,
+  readFile, getFileBlob, buildPreviewBundle, formatBytes, sanitizeFileName,
 } from '../../services/workspace'
+import { createPreviewBridge } from '../../services/previewRuntime'
+import { runtimeConfigFor } from '../../services/previewPaths'
 import { parseDelimited, detectDelimiter } from '../../utils/csvParse'
 
 const props = defineProps({
@@ -175,9 +179,11 @@ const blobUrl = ref('')
 const srcdoc = ref('')
 const previewError = ref('')
 const previewLoading = ref(false)
+const previewFrame = ref(null)
 let loadSeq = 0
 let previewSeq = 0
 let changeTimer = null
+let previewBridge = null
 
 const ext = computed(() => String(props.name || props.path).split('.').pop().toLowerCase())
 const kind = computed(() => {
@@ -365,7 +371,7 @@ async function ensurePreview() {
   previewLoading.value = true
   previewError.value = ''
   try {
-    const result = await buildPreviewHtml(props.path)
+    const result = await buildPreviewBundle(props.path)
     if (seq !== previewSeq) return
     srcdoc.value = result.html
   } catch (err) {
@@ -425,7 +431,19 @@ watch(mode, value => {
 })
 window.addEventListener('xiyue:workspace-changed', onWorkspaceChanged)
 
+// 这里的预览只是侧栏小窗，只替页面应答工作区内的相对 fetch；
+// 日志与错误的控制台在放大后的 WorkspacePreview 里，不重复做一份 UI
+onMounted(() => {
+  previewBridge = createPreviewBridge({
+    getFrame: () => previewFrame.value,
+    getBase: () => runtimeConfigFor(props.path).base,
+    readFile: getFileBlob,
+  })
+})
+
 onUnmounted(() => {
+  previewBridge?.destroy()
+  previewBridge = null
   revokeBlob()
   clearTimeout(changeTimer)
   window.removeEventListener('xiyue:workspace-changed', onWorkspaceChanged)

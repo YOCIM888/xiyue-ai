@@ -195,6 +195,59 @@ describe('buildGraph', () => {
     expect(graph.order).toEqual(['lazy.js', 'a.js'])
     expect(graph.modules.find(item => item.path === 'a.js').text).toContain('import("lazy.js")')
   })
+
+  it('inline 多入口各自按自己的目录解析相对依赖', async () => {
+    const graph = await run(
+      { 'sub/util.js': 'export const n = 2', 'root.js': 'export const r = 1' },
+      {
+        inline: [
+          { path: 'sub/__inline_1__.js', text: 'import { n } from "./util.js"\nconsole.log(n)' },
+          { path: '__inline_2__.js', text: 'import { r } from "./root.js"\nconsole.log(r)' },
+        ],
+      }
+    )
+    expect(graph.missing).toEqual([])
+    expect(graph.entry).toBe('')
+    expect(graph.order).toEqual(['sub/util.js', 'sub/__inline_1__.js', 'root.js', '__inline_2__.js'])
+    expect(graph.modules.find(item => item.path === 'sub/__inline_1__.js').text).toContain('from "sub/util.js"')
+  })
+
+  it('inline 与 code 可以并存，扩展名决定要不要过编译', async () => {
+    const compiled = []
+    const graph = await run(
+      { 'lib.js': 'export const v = 1' },
+      {
+        code: 'import { v } from "./lib.js"\nconsole.log(v)',
+        inline: [{ path: 'sub/__inline_1__.ts', text: 'export const n: number = 2' }],
+      },
+      { compiled }
+    )
+    expect(compiled).toEqual(['sub/__inline_1__.ts'])
+    expect(graph.missing).toEqual([])
+    expect(graph.entry).toBe(VIRTUAL_ENTRY)
+    expect(graph.order).toEqual(['lib.js', VIRTUAL_ENTRY, 'sub/__inline_1__.ts'])
+  })
+
+  it('allowBare：已有垫片优先，其余裸名原样留给注入的 importmap', async () => {
+    const graph = await run({
+      'a.js': 'import { h } from "vue"\nimport { debounce } from "lodash"\nimport "https://cdn.example.com/x.js"\nexport const a = () => [h, debounce]',
+    }, { entry: 'a.js', allowBare: true }, vendorIo())
+    expect(graph.missing).toEqual([])
+    expect(graph.bare).toEqual(['lodash'])
+    expect(graph.order).toEqual([VUE_PATH, 'a.js'])
+    const text = graph.modules.find(item => item.path === 'a.js').text
+    expect(text).toContain(`from "${VUE_PATH}"`)
+    expect(text).toContain('from "lodash"')
+    expect(text).toContain('"https://cdn.example.com/x.js"')
+  })
+
+  it('allowBare 默认关闭：裸名与绝对地址当场拒绝，不会静默丢给浏览器', async () => {
+    const graph = await run({
+      'a.js': 'import "https://cdn.example.com/x.js"',
+    }, { entry: 'a.js' })
+    expect(graph.bare).toEqual([])
+    expect(graph.missing[0].specifier).toBe('https://cdn.example.com/x.js')
+  })
 })
 
 describe('沙箱源码注入前提', () => {

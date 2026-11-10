@@ -29,6 +29,24 @@ export default [
     },
   },
   {
+    // previewBoot / previewModules 同理：和 previewPaths.js（去掉 export）以及配置常量包在同一个 IIFE 里注入预览 iframe
+    files: ['src/services/previewBoot.js', 'src/services/previewModules.js'],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+        __XIYUE_PREVIEW__: 'readonly',
+        PREVIEW_MESSAGE: 'readonly',
+        PREVIEW_REPLY: 'readonly',
+        PREVIEW_LEVELS: 'readonly',
+        isExternalUrl: 'readonly',
+        formatPreviewArg: 'readonly',
+        mapModuleUrls: 'readonly',
+        buildImportMap: 'readonly',
+        loadPreviewModules: 'readonly',
+      },
+    },
+  },
+  {
     files: ['tests/**/*.js', '*.config.js'],
     languageOptions: {
       ecmaVersion: 'latest',

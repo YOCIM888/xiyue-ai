@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   blockedAlternatives, blockedExtension, candidatePaths, compileKind, dirnameOf,
-  extractImportSpecs, isBareSpecifier, isVendorSpecifier,
+  extractImportSpecs, isBareSpecifier, isUrlSpecifier, isVendorSpecifier,
   normalizePath, resolveRelative, rewriteSpecifiers,
 } from '../src/services/sandbox/modulePaths'
 
@@ -80,6 +80,15 @@ describe('路径解析', () => {
     expect(isBareSpecifier('vue')).toBe(true)
     expect(isBareSpecifier('./vue')).toBe(false)
     expect(isBareSpecifier('/vue')).toBe(false)
+  })
+
+  it('绝对地址原样交给浏览器，不当成工作区路径', () => {
+    for (const spec of ['https://cdn.example.com/x.js', 'http://a/b', '//cdn.example.com/x.js', 'data:text/javascript,x', 'blob:https://a/1']) {
+      expect(isUrlSpecifier(spec)).toBe(true)
+    }
+    for (const spec of ['vue', 'lodash/debounce', './a.js', '../a.js', '/abs/a.js', '']) {
+      expect(isUrlSpecifier(spec)).toBe(false)
+    }
   })
 
   it('只有内置垫片名算可用裸名', () => {

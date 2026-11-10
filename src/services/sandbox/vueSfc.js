@@ -62,7 +62,7 @@ export function compileSfc(path, source) {
     throw new Error(`${path} 编译失败：${detail}${at}`, { cause: err })
   }
   const ignored = []
-  if (descriptor.styles.length) ignored.push(`<style> ×${descriptor.styles.length}（沙箱不渲染样式）`)
+  if (descriptor.styles.length) ignored.push(`<style> ×${descriptor.styles.length}（样式被丢弃，不会渲染）`)
   if (descriptor.customBlocks.length) ignored.push(`自定义块 ×${descriptor.customBlocks.length}`)
   const lang = String(block?.lang || '').toLowerCase()
   // compileScript 原样保留 <script lang="ts"> 的类型标注，后面还得按 TS 再转译一次

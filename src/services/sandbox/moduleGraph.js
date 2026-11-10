@@ -5,7 +5,8 @@
  */
 import {
   blockedAlternatives, blockedExtension, candidatePaths, compileKind, dirnameOf,
-  extractImportSpecs, isBareSpecifier, isVendorSpecifier, rewriteSpecifiers,
+  extractImportSpecs, isBareSpecifier, isUrlSpecifier, isVendorSpecifier, normalizePath,
+  rewriteSpecifiers,
 } from './modulePaths'
 import { vendorByPath, vendorBySpecifier } from './vendorModules'
 
@@ -46,21 +47,40 @@ function failureReason(specifier) {
 /**
  * @param {object} io  { listFiles(dirPath), readText(path), readVendor(path), compile(path, text) }
  *                     compile 返回 { text, lines, shift, notes }，把 TS/Vue/JSON 变成 ESM JS
- * @param {string} entry       入口文件路径；与 code 二选一
- * @param {string} code        内联入口代码（只支持 JS，TypeScript 请写成文件）
- * @param {string[]} deps      额外预加载的模块路径
+ * @param {string} entry       入口文件路径
+ * @param {string} code        单个内联入口（挂在工作区根目录，只支持 JS）
+ * @param {Array<{path: string, text: string}>} inline
+ *        多个内联模块。路径必须由调用方按宿主文档所在目录生成：
+ *        sub/page.html 里的内联模块要叫 sub/__inline_1__.js，否则它写的 ./x.js 会解析到根目录。
+ *        扩展名决定要不要转译，所以 lang="ts" 的内联模块给 .ts 就能过同一套编译。
+ * @param {string[]} deps      额外进图的模块路径（只解析依赖，不当入口执行）
+ * @param {boolean} allowBare  预览用：裸模块名与 http(s) 绝对地址原样保留，由注入的 importmap
+ *                             指到 CDN；沙箱执行时保持 false —— 那里没有网络，两者都必须当场拒绝
  */
 export async function buildGraph({
   io,
   entry = '',
   code = '',
+  inline = [],
   deps = [],
+  allowBare = false,
   maxFiles = MAX_MODULE_FILES,
   maxBytes = MAX_MODULE_TOTAL_BYTES,
 }) {
   const inlineCode = String(code || '')
+  const inlineSources = new Map()
+  if (inlineCode.trim()) inlineSources.set(VIRTUAL_ENTRY, inlineCode)
+  for (const item of Array.isArray(inline) ? inline : []) {
+    const path = normalizePath(item?.path)
+    if (path) inlineSources.set(path, String(item?.text ?? ''))
+  }
   const entryPath = inlineCode.trim() ? VIRTUAL_ENTRY : String(entry || '').trim()
-  if (!entryPath) throw new Error('需要 entry 或 code 才能运行模块')
+  const entryRoots = [...(entryPath ? [entryPath] : []), ...[...inlineSources.keys()].filter(p => p !== entryPath)]
+  const roots = [
+    ...entryRoots,
+    ...deps.map(dep => String(dep || '').trim()).filter(Boolean).filter(dep => !entryRoots.includes(dep)),
+  ]
+  if (!roots.length) throw new Error('需要 entry、code 或 inline 才能运行模块')
 
   const dirCache = new Map()
   const modules = new Map()
@@ -69,6 +89,8 @@ export async function buildGraph({
   const missing = []
   const order = []
   const cycles = []
+  /** allowBare 时原样保留的裸模块名，由调用方决定指到哪个 CDN */
+  const bare = new Set()
   let totalBytes = 0
   let truncated = false
 
@@ -116,8 +138,8 @@ export async function buildGraph({
       order.push(path)
       return
     }
-    if (path === VIRTUAL_ENTRY) {
-      source = inlineCode
+    if (inlineSources.has(path)) {
+      source = inlineSources.get(path)
     } else if (await fileExists(path)) {
       try {
         source = await io.readText(path)
@@ -158,6 +180,11 @@ export async function buildGraph({
     for (const { specifier, kind } of extractImportSpecs(source)) {
       if (isVendorSpecifier(specifier)) {
         resolved.set(specifier, vendorBySpecifier(specifier).path)
+        continue
+      }
+      if (allowBare && isUrlSpecifier(specifier)) continue
+      if (allowBare && isBareSpecifier(specifier)) {
+        bare.add(specifier)
         continue
       }
       if (blockedExtension(specifier)) {
@@ -204,9 +231,8 @@ export async function buildGraph({
     order.push(path)
   }
 
-  const roots = [entryPath, ...deps.map(dep => String(dep || '').trim()).filter(Boolean)]
   for (const root of roots) {
-    if (root === VIRTUAL_ENTRY) {
+    if (inlineSources.has(root)) {
       await requireFile(root, null, [])
       continue
     }
@@ -228,6 +254,7 @@ export async function buildGraph({
     entry: entryPath,
     missing,
     cycles: [...new Set(cycles)],
+    bare: [...bare],
     truncated,
     totalBytes,
     maps,
