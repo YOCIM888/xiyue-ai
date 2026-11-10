@@ -13,6 +13,8 @@
 
   --text-primary: #1c1c1e;
   --text-secondary: #636366;
+  /* 小字号也要能读清的非正文文字：面板底色上 ≥4.5:1 */
+  --text-subtle: #6e6e76;
   --text-muted: #aeaeb2;
 
   --accent: #6366f1;
@@ -52,6 +54,7 @@
 
   --text-primary: #e4e4ed;
   --text-secondary: #a0a0b8;
+  --text-subtle: #8a8aa5;
   --text-muted: #6a6a88;
 
   --accent: #818cf8;

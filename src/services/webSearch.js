@@ -1,6 +1,7 @@
 /**
  * 联网搜索：Tavily Search API 直连
- * 只在明确搜索意图时调用，失败时返回可读错误，不抛出异常。
+ * 由「搜索」开关强制触发，或在开关关闭时按 detectSearchIntent 判定的明确意图触发，
+ * 失败时返回可读错误，不抛出异常。
  */
 
 const ENDPOINT = 'https://api.tavily.com/search'
@@ -21,9 +22,12 @@ const QUESTION = /[?？]|吗|呢|多少|什么|怎么|如何|哪|谁|几点|什�
 const REQUEST = /(帮我|请|给我|想|要|能不能|可以|告诉)/i
 const CHITCHAT = /^(你好|嗨|哈喽|早上好|晚上好|晚安|谢谢|再见|在吗|最近怎么样|最近好吗|你最近|今天心情|我好累|我难过|我爱你|想你)/i
 const PERSONAL_STATE = /(我(很|好|有点|最近)?(难过|开心|累|烦|焦虑|孤独|无聊)|心情|情绪|喜欢|爱你|想你)/i
+// 问的是助手自己（你是谁、能做什么），不是外部事实，别提示联网
+const ABOUT_ASSISTANT = /你(?:是谁|叫什么|是做什么|是干什么|能做|会做|有什么|能帮)/i
 
-const AFFIRMATIVE = /^(搜|要|要搜|好|可以|嗯|对|查|搜索|搜一下|帮我搜|联网搜|麻烦搜|yes|ok)[吧啊呀。！!，,]*$/i
-const NEGATIVE = /^(不|不用|不搜|别搜|算了|不需要|no)[吧啊呀。！!，,]*$/i
+// 用户对「要不要搜」的回答：整句只有一个态度词才算数，避免长句里误判
+const AFFIRMATIVE = /^(?:搜|搜一下|搜索|帮我搜|联网搜|麻烦搜|要|要搜|需要|好+|行|可以|嗯+|对|查|查一下|yes|ok)[吧啊呀哦哈了的嘛，,。.！!~～\s]*$/i
+const NEGATIVE = /^(?:不|不用|不需要|不要|不搜|不用搜|别搜|算了|no)[吧啊呀哦哈了的嘛，,。.！!~～\s]*$/i
 
 // 搜索失败或无 Key 时的兜底入口（浏览器直连这些页会被 CORS 拦截，只作为可点击链接）
 const FALLBACK_ENGINES = [
@@ -52,14 +56,15 @@ export function buildSearchFallbackText(query) {
 export function detectSearchIntent(text) {
   const t = String(text ?? '').trim()
   if (!t || t.length > 500) return 'none'
-  if (CHITCHAT.test(t)) return 'none'
+  // 明确的搜索动作/强时效词优先，否则「你好，帮我搜一下今天的新闻」会被当成问候而漏掉
   if (STRONG_SEARCH.test(t) || STRONG_FRESH.test(t)) return 'search'
+  if (CHITCHAT.test(t)) return 'none'
 
   const fresh = FRESH_WORD.test(t)
   const question = QUESTION.test(t)
   if (fresh && (question || REQUEST.test(t)) && FACTUAL_TOPIC.test(t)) return 'search'
 
-  if (question && FACTUAL_TOPIC.test(t) && !PERSONAL_STATE.test(t)) return 'confirm'
+  if (question && FACTUAL_TOPIC.test(t) && !PERSONAL_STATE.test(t) && !ABOUT_ASSISTANT.test(t)) return 'confirm'
   return 'none'
 }
 

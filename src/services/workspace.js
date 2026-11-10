@@ -206,6 +206,8 @@ async function resolveDir(segments, { create = false } = {}) {
       dir = await dir.getDirectoryHandle(name, { create })
     } catch (err) {
       if (err?.name === 'NotFoundError') throw new Error(`目录不存在：${segments.join('/')}`, { cause: err })
+      // 把「拿目录却拿到文件」的原始 DOMException 翻成可读提示（如 search 的 path 传了文件）
+      if (err?.name === 'TypeMismatchError') throw new Error(`路径不是目录：${segments.join('/')}`, { cause: err })
       throw err
     }
   }
@@ -474,19 +476,37 @@ function sortVersionsDesc(a, b) {
   return (b.at || 0) - (a.at || 0)
 }
 
-/** 覆盖前把旧内容写入 .xiyue-history：单文件保留 5 版，全局最多 200 版 */
+/** 备份没做成不能阻断写入，但也不能无声：同一路径一分钟内只提示一次 */
+const BACKUP_WARN_COOLDOWN_MS = 60 * 1000
+const backupWarnedAt = new Map()
+
+/** 原样返回 reason，方便一路带回写入结果里 */
+function reportBackupIssue(pathKey, reason) {
+  const last = backupWarnedAt.get(pathKey) || 0
+  if (Date.now() - last >= BACKUP_WARN_COOLDOWN_MS) {
+    backupWarnedAt.set(pathKey, Date.now())
+    window.__ui?.showToast?.(`${pathKey} 这次覆盖没有生成历史版本：${reason}`, 'error', 5200)
+  }
+  return reason
+}
+
+/** 覆盖前把旧内容写入 .xiyue-history：单文件保留 5 版，全局最多 200 版；返回 '' 表示无需提醒 */
 async function backupExisting(pathKey, file, nextText) {
-  if (!file || file.size === 0 || file.size > MAX_BACKUP_CHARS) return
+  if (!file || file.size === 0) return ''
+  if (file.size > MAX_BACKUP_CHARS) {
+    return reportBackupIssue(pathKey, `原内容 ${formatBytes(file.size)} 超过 ${formatBytes(MAX_BACKUP_CHARS)}，不备份`)
+  }
   let text
   try {
     text = new TextDecoder('utf-8').decode(await file.arrayBuffer())
   } catch {
-    return
+    return reportBackupIssue(pathKey, '原内容无法按文本读取')
   }
-  if (text.includes('\u0000') || text === String(nextText ?? '')) return
+  if (text === String(nextText ?? '')) return ''
+  if (text.includes('\u0000')) return reportBackupIssue(pathKey, '原内容是二进制，历史版本只存文本')
   try {
     const dir = await getHistoryDir(true)
-    if (!dir) return
+    if (!dir) return reportBackupIssue(pathKey, '历史目录无法创建')
     const at = Date.now()
     const fileName = `h_${hashPath(pathKey)}_${at}_${Math.random().toString(36).slice(2, 6)}.json`
     const handle = await dir.getFileHandle(fileName, { create: true })
@@ -516,9 +536,11 @@ async function backupExisting(pathKey, file, nextText) {
       try { await dir.removeEntry(item.file) } catch { /* 已被清理 */ }
     }
     await writeHistoryIndex(dir, index)
-  } catch {
-    // 备份失败不阻断正常写入
+  } catch (err) {
+    // 备份没做成不阻断正常写入，只是这次覆盖回不去，必须让调用方知道
+    return reportBackupIssue(pathKey, `历史目录不可写（${err?.message || err}）`)
   }
+  return ''
 }
 
 async function writeText(path, text, { force = false } = {}) {
@@ -544,7 +566,8 @@ async function writeText(path, text, { force = false } = {}) {
       )
     }
   }
-  if (existing) await backupExisting(key, existing, text)
+  let backupWarning = ''
+  if (existing) backupWarning = await backupExisting(key, existing, text)
   const created = !existing
   let handle
   try {
@@ -568,7 +591,7 @@ async function writeText(path, text, { force = false } = {}) {
     snapshots.delete(key)
   }
   notifyWorkspaceChanged(key)
-  return { created, size: text.length }
+  return { created, size: text.length, backedUp: !backupWarning, backupWarning }
 }
 
 export async function writeFile(path, content, { force = false } = {}) {
@@ -646,8 +669,12 @@ export async function editFile(path, oldText, newText, { replaceAll = false, for
   }
   const replace = String(newText ?? '')
   const updated = replaceAll ? text.split(search).join(replace) : text.replace(search, replace)
-  await writeText(path, updated, { force })
-  return { replacements: replaceAll ? count : 1 }
+  const written = await writeText(path, updated, { force })
+  return {
+    replacements: replaceAll ? count : 1,
+    backedUp: written.backedUp,
+    backupWarning: written.backupWarning,
+  }
 }
 
 export async function makeDir(path) {
@@ -682,7 +709,14 @@ async function copyEntry(srcDir, name, destDir) {
 async function pathExists(path) {
   const segments = splitPath(path)
   if (!segments.length) return true
-  const { dir, name } = await resolveParent(path)
+  // 父目录都不存在时答案是「不存在」而不是报错：copy/move/恢复的目标路径常常要先建新目录
+  let dir
+  try {
+    dir = await resolveDir(segments.slice(0, -1))
+  } catch {
+    return false
+  }
+  const name = segments[segments.length - 1]
   try {
     await dir.getFileHandle(name)
     return true
@@ -869,7 +903,12 @@ export async function restoreTrash(trashName) {
   try {
     entry = await trash.getDirectoryHandle(entryName)
   } catch {
-    throw new Error('回收站条目不存在，可能已被清理')
+    // 旧版把文件扁平地存在回收站根下，句柄类型是 file
+    try {
+      entry = await trash.getFileHandle(entryName)
+    } catch {
+      throw new Error('回收站条目不存在，可能已被清理')
+    }
   }
   let meta = null
   try {
@@ -1047,8 +1086,9 @@ export async function getHistoryText(file) {
 
 export async function restoreHistory(file) {
   const payload = await readHistoryPayload(file)
-  await writeFile(payload.path, payload.text, { force: true })
-  return { path: payload.path, at: payload.at }
+  // 覆盖当前内容前同样会先备份；备份没做成要带回给调用方
+  const written = await writeFile(payload.path, payload.text, { force: true })
+  return { path: payload.path, at: payload.at, backedUp: written.backedUp, backupWarning: written.backupWarning }
 }
 
 /** 某个文件最近一次历史版本（用于 AI 修改 diff） */
@@ -1438,6 +1478,7 @@ export async function importZip(file, path = '') {
   if (!entries.length) throw new Error('压缩包里没有可导入的文件')
   let imported = 0
   let bytes = 0
+  const paths = []
   for (const { rel, entry } of entries) {
     let blob
     try {
@@ -1453,7 +1494,8 @@ export async function importZip(file, path = '') {
     await writeBlob(rel, blob, { maxBytes: MAX_IMPORT_FILE_BYTES })
     imported += 1
     bytes += blob.size
+    paths.push(rel)
   }
   notifyWorkspaceChanged(path)
-  return { imported, skipped, bytes }
+  return { imported, skipped, bytes, paths }
 }

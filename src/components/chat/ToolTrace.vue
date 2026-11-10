@@ -152,7 +152,7 @@ function toolLabel(tool) {
 }
 .round-head {
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--text-subtle);
   margin-bottom: 6px;
 }
 .round-text {
@@ -164,7 +164,7 @@ function toolLabel(tool) {
 .round-thinking {
   font-size: 12px;
   line-height: 1.65;
-  color: var(--text-muted);
+  color: var(--text-subtle);
   margin-bottom: 8px;
   padding: 6px 10px;
   border-left: 2px solid var(--border-color);
@@ -202,7 +202,7 @@ function toolLabel(tool) {
   padding: 6px 8px;
   border-radius: 6px;
   background: var(--bg-sidebar);
-  color: var(--text-muted);
+  color: var(--text-subtle);
   font-family: 'SF Mono', 'Fira Code', monospace;
   font-size: 11px;
   white-space: pre-wrap;
@@ -213,7 +213,7 @@ function toolLabel(tool) {
 .trace-note {
   margin: 4px 0 0;
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-subtle);
 }
 .trace-note.fail { color: var(--danger, #dc2626); }
 .trace-budget {
@@ -223,6 +223,6 @@ function toolLabel(tool) {
   border-top: 1px solid var(--border-color);
   background: var(--bg-sidebar);
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--text-subtle);
 }
 </style>

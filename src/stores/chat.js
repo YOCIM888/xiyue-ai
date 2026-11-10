@@ -10,6 +10,8 @@ import {
   searchWeb,
   buildSearchContext,
   buildSearchFallbackText,
+  detectSearchIntent,
+  detectSearchReply,
 } from '../services/webSearch'
 import { buildSearchQuery, detectTimeRange } from '../services/searchQuery'
 import { recordUsage } from '../services/usageStats'
@@ -43,6 +45,8 @@ import systemPromptRaw from '../../public/prompt/system.md?raw'
 
 // 回灌给模型的单条工具结果上限；超出必须显式标注，否则模型会把自己看到的半截当成全文
 const RESULT_CHARS_TO_MODEL = 8000
+// 「要不要联网搜」的确认窗口：过久之后用户一句「要」不该再回头搜老问题
+const SEARCH_CONFIRM_TTL_MS = 10 * 60 * 1000
 
 export const useChatStore = defineStore('chat', () => {
   const conversation = ref(createConversation())
@@ -58,6 +62,7 @@ export const useChatStore = defineStore('chat', () => {
   const imageGenerating = ref(false)
   const abortController = ref(null)
   let autoDistillRunning = false
+  let pendingSearchConfirm = null
 
   const branches = computed(() => conversation.value?.branches || [])
   const activeBranch = computed(() =>
@@ -145,6 +150,60 @@ export const useChatStore = defineStore('chat', () => {
       console.error('[export] 工具调用导出失败', err)
       window.__ui?.showToast(`导出失败：${err?.message || '未知错误'}`, 'error', 4200)
     }
+  }
+
+  // 联网搜索预取：返回注入模型的结果块与展示给用户的提示，任何失败都不抛异常
+  async function runSearchPrefetch(rawQuery) {
+    const settings = useSettingsStore()
+    // 去掉口语前缀与时间短语，保留 site: / filetype: 等操作符
+    const query = buildSearchQuery(rawQuery) || rawQuery
+    const timeRange = detectTimeRange(rawQuery)
+    const fallbackText = buildSearchFallbackText(rawQuery)
+    const apiKey = String(settings.tavilyApiKey || '').trim()
+
+    if (!apiKey) {
+      const msg = '未配置 Tavily API Key，已跳过联网搜索。请在 设置 → 搜索服务 中填写。'
+      window.__ui?.showToast(msg, 'error', 4500)
+      return { notice: fallbackText ? `${msg}\n${fallbackText}` : msg, block: '' }
+    }
+
+    // 搜索期间用 AI 气泡提示，搜索完成后直接进入生成
+    searching.value = true
+    let result
+    try {
+      result = await searchWeb(query, {
+        apiKey,
+        depth: settings.searchDepth,
+        maxResults: settings.searchMaxResults,
+        timeRange,
+      })
+    } finally {
+      searching.value = false
+    }
+
+    if (!result.ok) {
+      window.__ui?.showToast(result.message, 'error', 4500)
+      return { notice: fallbackText ? `${result.message}\n${fallbackText}` : result.message, block: '' }
+    }
+
+    const built = buildSearchContext(query, result, {
+      maxChars: settings.searchMaxChars,
+      itemMaxChars: settings.searchItemMaxChars,
+    })
+    if (built.truncated) {
+      window.__ui?.showToast(`搜索结果较长，已截断至 ${built.maxChars} 字后注入`, 'info', 3200)
+    }
+    return { notice: '', block: built.text }
+  }
+
+  // 上一轮问过「要不要联网搜」：本轮按用户回答取回原问题，无论回答如何都只消费一次
+  function takeSearchConfirm(topicId, text) {
+    const pending = pendingSearchConfirm
+    if (!pending) return ''
+    pendingSearchConfirm = null
+    if (pending.topicId !== topicId) return ''
+    if (Date.now() - pending.at > SEARCH_CONFIRM_TTL_MS) return ''
+    return detectSearchReply(text) === 'yes' ? pending.query : ''
   }
 
   async function generateReply(history, linkText, documentIds = [], searchBlock = '', options = {}) {
@@ -717,47 +776,22 @@ export const useChatStore = defineStore('chat', () => {
     let searchNotice = ''
     let searchBlock = ''
 
-    // 强制联网搜索开关：保留原有直接搜索路径，不参与工具选择
-    if (settings.forceSearch) {
-      const rawQuery = userContent
-      // 去掉口语前缀与时间短语，保留 site: / filetype: 等操作符
-      const query = buildSearchQuery(rawQuery) || rawQuery
-      const timeRange = detectTimeRange(rawQuery)
-      const fallbackText = buildSearchFallbackText(rawQuery)
-      const apiKey = String(settings.tavilyApiKey || '').trim()
-
-      if (!apiKey) {
-        const msg = '未配置 Tavily API Key，已跳过联网搜索。请在 设置 → 搜索服务 中填写。'
-        searchNotice = fallbackText ? `${msg}\n${fallbackText}` : msg
-        window.__ui?.showToast(msg, 'error', 4500)
-      } else {
-        // 搜索期间用 AI 气泡提示，搜索完成后直接进入生成
-        searching.value = true
-        let result
-        try {
-          result = await searchWeb(query, {
-            apiKey,
-            depth: settings.searchDepth,
-            maxResults: settings.searchMaxResults,
-            timeRange,
-          })
-        } finally {
-          searching.value = false
-        }
-
-        if (result.ok) {
-          const built = buildSearchContext(query, result, {
-            maxChars: settings.searchMaxChars,
-            itemMaxChars: settings.searchItemMaxChars,
-          })
-          searchBlock = built.text
-          if (built.truncated) {
-            window.__ui?.showToast(`搜索结果较长，已截断至 ${built.maxChars} 字后注入`, 'info', 3200)
-          }
-        } else {
-          searchNotice = fallbackText ? `${result.message}\n${fallbackText}` : result.message
-          window.__ui?.showToast(result.message, 'error', 4500)
-        }
+    // 联网搜索：开关开启时每条都先搜；关闭时按本条消息的意图判断，闲聊不会触发网络请求
+    const confirmQuery = takeSearchConfirm(topicId, userContent)
+    if (settings.forceSearch || confirmQuery) {
+      const prefetched = await runSearchPrefetch(confirmQuery || userContent)
+      searchNotice = prefetched.notice
+      searchBlock = prefetched.block
+    } else if (settings.searchSkillEnabled && String(settings.tavilyApiKey || '').trim()) {
+      const intent = detectSearchIntent(userContent)
+      if (intent === 'search') {
+        const prefetched = await runSearchPrefetch(userContent)
+        searchNotice = prefetched.notice
+        searchBlock = prefetched.block
+      } else if (intent === 'confirm') {
+        // 时效性存疑但不确定要搜：先正常回答，把要不要搜的选择留给用户
+        pendingSearchConfirm = { topicId, query: userContent, at: Date.now() }
+        searchNotice = '本次没有联网搜索；如果答案需要最新信息，回复「搜」我就查一下。'
       }
     }
 

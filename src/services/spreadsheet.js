@@ -215,8 +215,3 @@ export async function parseXlsxFile(file) {
   if (!blocks.length) throw new Error('表格中没有可读取的数据')
   return blocks.join('\n\n')
 }
-
-/** 是否为可解析的 Excel 文件 */
-export function isXlsxFile(name = '') {
-  return String(name).toLowerCase().endsWith('.xlsx')
-}

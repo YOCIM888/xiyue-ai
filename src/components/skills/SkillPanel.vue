@@ -104,7 +104,7 @@
                 联网搜索
                 <span class="skill-tag">默认</span>
               </div>
-              <div class="skill-desc">由模型按需显式调用 Tavily，检索最新信息并附来源</div>
+              <div class="skill-desc">模型按需调用 Tavily；提问有明显搜索意图时先联网检索并附来源</div>
             </div>
             <label class="switch" :title="settings.searchSkillEnabled ? '点击关闭' : '点击开启'">
               <input v-model="settings.searchSkillEnabled" type="checkbox" />

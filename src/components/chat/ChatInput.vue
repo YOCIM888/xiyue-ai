@@ -101,7 +101,7 @@
             <span>思考</span>
           </button>
           <button class="tool-btn" :class="{ active: settings.forceSearch }"
-            @click="toggleForceSearch" title="联网搜索：开启后每条消息先搜索资料再回答">
+            @click="toggleForceSearch" title="联网搜索：开启后每条消息先搜；关闭时按提问意图自动判断">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             <span>搜索</span>
           </button>

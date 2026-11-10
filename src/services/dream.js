@@ -148,10 +148,6 @@ export const DREAM_WORKS = [
   },
 ]
 
-export function getWork(id) {
-  return DREAM_WORKS.find(w => w.id === id) || null
-}
-
 export function isDreamApiReady(settings) {
   if (!settings?.apiBase) return false
   if (settings.apiBase.includes('/ollama')) return true

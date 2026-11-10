@@ -4,7 +4,6 @@ import { getItem, setItem } from './kv'
 const KEYS = {
   SETTINGS: 'ai_chat_settings',
   TOPICS: 'ai_chat_topics',
-  SYSTEM_PROMPT: 'system_prompt_content',
 }
 
 export function loadSettings() {
@@ -27,12 +26,4 @@ export function loadTopics() {
 
 export function saveTopics(topics) {
   setItem(KEYS.TOPICS, JSON.stringify(topics))
-}
-
-export function loadSystemPrompt() {
-  return getItem(KEYS.SYSTEM_PROMPT) || ''
-}
-
-export function saveSystemPrompt(content) {
-  setItem(KEYS.SYSTEM_PROMPT, content)
 }

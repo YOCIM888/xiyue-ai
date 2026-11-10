@@ -63,10 +63,6 @@ export function recordAiFileAction(action, paths) {
   emit(list[list.length - 1] || '')
 }
 
-export function getWorkspaceActivity() {
-  return { taskId: state.taskId, startedAt: state.startedAt, writes: state.writes.slice() }
-}
-
 /** 当前任务去重后的产物，删除动作会把对应路径剔除 */
 export function getTaskArtifacts() {
   if (!state.taskId) return []
