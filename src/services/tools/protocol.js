@@ -5,7 +5,7 @@
 import { formatBytes } from '../workspace'
 
 export const MAX_CALLS_PER_ROUND = 10
-export const WRITE_BUDGET_FILES = 30
+export const WRITE_BUDGET_FILES = 80
 export const WRITE_BUDGET_BYTES = 15 * 1024 * 1024
 
 export const TOOL_ALIASES = {

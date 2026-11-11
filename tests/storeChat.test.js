@@ -741,7 +741,7 @@ describe('工具调用循环', () => {
     expect(feedback.content).toContain('工具：files')
     expect(feedback.content).toContain('状态：成功')
     expect(feedback.content).toContain('a.js\nb.js')
-    expect(feedback.content).toContain('还剩 19 轮工具调用')
+    expect(feedback.content).toContain('还剩 49 轮工具调用')
     expect(feedback.toolBrief).toContain('第 1 轮工具结果')
 
     const reply = store.messages[1]
@@ -756,7 +756,7 @@ describe('工具调用循环', () => {
       tool: 'files', ok: true, summary: 'files：列出目录', output: 'a.js\nb.js',
       label: '列出目录', target: '', icon: 'folder', pending: false, running: false,
     }])
-    expect(trace.used).toMatchObject({ rounds: 1, roundsTotal: 20, files: 0 })
+    expect(trace.used).toMatchObject({ rounds: 1, roundsTotal: 50, files: 0 })
     expect(reply.parts[2].content).toBe('一共有两个文件。')
   })
 
@@ -941,11 +941,11 @@ describe('工具调用循环', () => {
     tools.executeToolCall.mockResolvedValue({ ok: true, text: '结果', record: '完成' })
     // 每一轮都接着要求调用工具，直到轮次用满；剧本项用完就返回空正文，所以要把生成器排满
     const keepCalling = () => ({ text: `第 ${chatCalls().length} 次\n${listCall}` })
-    script(keepCalling, keepCalling, keepCalling, keepCalling, keepCalling)
+    script(...Array.from({ length: 11 }, () => keepCalling))
     await store.sendMessage('一直调用')
-    // 3 轮上限：1 次首发 + 3 次回灌
-    expect(chatCalls()).toHaveLength(4)
-    expect(traceOf(store.messages[1]).used.roundsTotal).toBe(3)
+    // 10 轮上限：1 次首发 + 10 次回灌
+    expect(chatCalls()).toHaveLength(11)
+    expect(traceOf(store.messages[1]).used.roundsTotal).toBe(10)
     expect(store.messages[1].content).toContain('已达到工具调用上限')
     expect(store.messages[1].content).not.toContain('"tool"')
   })

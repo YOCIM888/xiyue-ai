@@ -235,7 +235,7 @@ export async function generateReply(history, linkText, documentIds = [], searchB
     let toolMessages = apiMessages
     let toolRounds = 0
     let toolImagesRejected = false
-    const MAX_TOOL_ROUNDS = settings.workModeEnabled ? 20 : settings.browserSkillEnabled ? 8 : 3
+    const MAX_TOOL_ROUNDS = settings.workModeEnabled ? 50 : settings.browserSkillEnabled ? 50 : 10
     const toolCallLimit = Math.max(1, Math.min(200, Number(settings.maxToolCallsPerRound) || 10))
     const writeBudget = createWriteBudget()
     // 同一条回答里累计的失败指纹，用来打断「同一个错误调用反复发」的空转
