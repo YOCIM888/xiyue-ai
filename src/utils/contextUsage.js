@@ -42,11 +42,14 @@ export function estimateTraceTokens(trace = [], { includeThinking = true } = {})
   }, 0)
 }
 
-/** 内联分段（正文段落 + 执行链路）的 tokens */
+/** 内联分段（正文段落 + 思考分段 + 执行链路）的 tokens */
 export function estimatePartsTokens(parts = [], options = {}) {
   return parts.reduce((sum, part) => {
     if (!part) return sum
     if (part.type === 'trace') return sum + estimateTraceTokens([part], options)
+    if (part.type === 'thinking') {
+      return sum + (options.includeThinking === false ? 0 : estimateTokens(part.content))
+    }
     return sum + estimateTokens(part.content)
   }, 0)
 }
@@ -56,18 +59,25 @@ export function estimateMessageTokens(message) {
   if (!message) return 0
   const parts = Array.isArray(message.parts) ? message.parts : []
   const traces = parts.filter(part => part?.type === 'trace')
+  const thinkingParts = parts.filter(part => part?.type === 'thinking')
   const partText = parts
-    .filter(part => part && part.type !== 'trace')
+    .filter(part => part && part.type !== 'trace' && part.type !== 'thinking')
     .map(part => part.content || '')
     .join('\n')
+  const thinkingPartTokens = thinkingParts.reduce((sum, part) => sum + estimateTokens(part.content), 0)
   // 最终正文通常已包含各文字段落，二者取较大值避免重复计算
   let tokens = 4 + Math.max(estimateTokens(message.content), estimateTokens(partText))
-  tokens += estimateTokens(message.thinking)
-  if (parts.length) {
-    // 分段里的每轮 thinking 是累计快照，已有 message.thinking 时不再重复计
-    tokens += estimateTraceTokens(traces, { includeThinking: !message.thinking })
-  } else if (Array.isArray(message.toolTrace) && message.toolTrace.length) {
-    tokens += estimateTraceTokens(message.toolTrace, { includeThinking: !message.thinking })
+  // 顶层 thinking 与最后一个思考分段同源，取较大值避免重复计算
+  tokens += Math.max(estimateTokens(message.thinking), thinkingPartTokens)
+  // 每轮 trace 的思考是独立历史，逐轮累计；仅与顶层/思考分段完全同源时才去重
+  // （最终回答失败回退时，最后一轮 trace 的思考会与顶层 thinking 同文）
+  const countedThinking = new Set()
+  if (message.thinking) countedThinking.add(message.thinking)
+  for (const part of thinkingParts) countedThinking.add(part.content)
+  const rounds = parts.length ? traces : (Array.isArray(message.toolTrace) ? message.toolTrace : [])
+  tokens += estimateTraceTokens(rounds, { includeThinking: false })
+  for (const round of rounds) {
+    if (round?.thinking && !countedThinking.has(round.thinking)) tokens += estimateTokens(round.thinking)
   }
   if (Array.isArray(message.images) && message.images.length) {
     tokens += message.images.length * 800

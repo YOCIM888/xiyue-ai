@@ -21,6 +21,7 @@ import {
   shouldShowUsageHint,
   callSignature,
   describeCall,
+  callDisplay,
   planCallBatches,
   archiveToolResults,
   toolResultBrief,
@@ -59,7 +60,8 @@ function sumUsage(list, model) {
  * streamingParts / abortController，用于驱动消息列表里的流式占位气泡。
  */
 export async function generateReply(history, linkText, documentIds = [], searchBlock = '', options = {}, state) {
-  const { isLoading, streamingContent, streamingThinking, streamingParts, abortController } = state
+  const { isLoading, streamingContent, streamingThinking, streamingParts, streamingStartedAt, abortController } = state
+  const startedAt = Date.now()
   const settings = useSettingsStore()
   const ocrEnabled = !!settings.ocrSkillEnabled
   const lastUser = [...history].reverse().find(m => m.role === 'user')
@@ -78,6 +80,7 @@ export async function generateReply(history, linkText, documentIds = [], searchB
         `图片理解 / OCR 需要视觉模型。请在「设置 → 模型设置 → 副模型 API」中配置一个视觉模型后再发图。\n` +
         `主对话仍可正常使用，不受影响。\n\n` +
         `提示：这不是本地 OCR，应用不会在设备上识别文字。`,
+      duration: Date.now() - startedAt,
     }
   }
 
@@ -85,6 +88,7 @@ export async function generateReply(history, linkText, documentIds = [], searchB
   streamingContent.value = ''
   streamingThinking.value = ''
   streamingParts.value = []
+  if (streamingStartedAt) streamingStartedAt.value = startedAt
   beginWorkspaceTask()
 
   let fullContent = ''
@@ -246,7 +250,8 @@ export async function generateReply(history, linkText, documentIds = [], searchB
         running: true,
         status: `正在执行工具（${calls.length}）…`,
         thinking: previousThinking.trim(),
-        steps: [],
+        // 先把整轮条目按原顺序摆出来（待执行），执行到哪条哪条点亮
+        steps: calls.map(call => ({ tool: call.tool, pending: true, ...callDisplay(call) })),
         notes: [],
       }
       parts.push(roundPart)
@@ -265,6 +270,8 @@ export async function generateReply(history, linkText, documentIds = [], searchB
             onStatus,
           })
         } catch (err) {
+          // 中止要交给外层统一收尾，把挂起的步骤标记为「已中止」而不是失败
+          if (err?.name === 'AbortError') throw err
           return {
             ok: false,
             refused: err?.code === 'WRITE_BUDGET',
@@ -276,12 +283,16 @@ export async function generateReply(history, linkText, documentIds = [], searchB
       // 无论串行还是并行，都按调用原顺序落账，步骤卡片与回灌顺序保持一致
       const settleOne = ({ call, result }) => {
         results.push({ call, result })
-        roundPart.steps.push({
-          tool: call.tool,
+        const step = roundPart.steps[calls.indexOf(call)]
+        Object.assign(step, {
           ok: !!result.ok,
+          pending: false,
+          running: false,
+          label: result.meta?.created === true ? '创建' : step.label,
           summary: String(result.record || (result.ok ? '完成' : result.text) || '').slice(0, 300),
           output: String(result.text || '').slice(0, 1200),
         })
+        if (result.meta?.stats) step.stats = result.meta.stats
         if (result.chartOption) chartOptions.push(result.chartOption)
         if (Array.isArray(result.images)) {
           if (call.tool === 'browser') latestBrowserShot = result.images[0] || latestBrowserShot
@@ -292,6 +303,11 @@ export async function generateReply(history, linkText, documentIds = [], searchB
 
       for (const batch of planCallBatches(calls)) {
         if (controller.signal.aborted) break
+        for (const call of batch.items) {
+          const step = roundPart.steps[calls.indexOf(call)]
+          step.pending = false
+          step.running = true
+        }
         if (batch.parallel && batch.items.length > 1) {
           const names = batch.items.map(item => item.tool).join(' + ')
           roundPart.status = `正在并行执行 ${names}（${batch.items.length} 个只读调用）…`
@@ -432,6 +448,13 @@ export async function generateReply(history, linkText, documentIds = [], searchB
     for (const option of chartOptions.slice(0, 2)) {
       content += `\n\n\`\`\`echarts\n${JSON.stringify(option)}\n\`\`\``
     }
+    // 最后一轮思考作为独立分段插进时间线，时间上落在最终正文之前；
+    // 与上一轮 trace 的思考同源时（最终回答失败回退）不重复插
+    const finalThinking = fullThinking.trim()
+    const lastTrace = [...parts].reverse().find(part => part.type === 'trace')
+    if (finalThinking && parts.length && finalThinking !== (lastTrace?.thinking || '')) {
+      parts.push({ type: 'thinking', content: finalThinking })
+    }
     // 最终正文作为最后一个文字段落；与上一段重合时就地补充，避免重复展示
     if (String(content).trim()) {
       const lastText = [...parts].reverse().find(part => part.type === 'text')
@@ -454,6 +477,7 @@ export async function generateReply(history, linkText, documentIds = [], searchB
       usage: finalUsage,
       images: finalImages.length ? finalImages.slice(-4) : undefined,
       pendingExport,
+      duration: Date.now() - startedAt,
     }
   } catch (err) {
     if (err.name === 'AbortError') {
@@ -468,7 +492,19 @@ export async function generateReply(history, linkText, documentIds = [], searchB
             part.running = false
             delete part.status
             part.notes.push('已中止')
+            for (const step of part.steps || []) {
+              if (step.pending || step.running) {
+                step.pending = false
+                step.running = false
+                step.aborted = true
+              }
+            }
           }
+        }
+        const abortedThinking = fullThinking.trim()
+        const abortedLastTrace = [...parts].reverse().find(part => part.type === 'trace')
+        if (abortedThinking && parts.length && abortedThinking !== (abortedLastTrace?.thinking || '')) {
+          parts.push({ type: 'thinking', content: abortedThinking })
         }
         const partial = fullContent ? stripToolBlocks(fullContent).trim() : ''
         const text = partial ? `${partial}\n\n*[已中止]*` : '*[已中止]*'
@@ -481,6 +517,7 @@ export async function generateReply(history, linkText, documentIds = [], searchB
           thinking: fullThinking || undefined,
           parts: parts.length ? parts : undefined,
           usage: finalUsage,
+          duration: Date.now() - startedAt,
         }
       }
       return null
@@ -492,6 +529,7 @@ export async function generateReply(history, linkText, documentIds = [], searchB
           content: `⚠️ 图片理解失败：主模型「${settings.model}」和副模型「${settings.secondaryModel}」都无法读取这张图片。\n\n` +
             `接口返回：${message}\n\n` +
             `建议把「设置 → 模型设置 → 模型图片能力」设为「纯文本」，并检查副模型是否为视觉模型（如 glm-4.6v / glm-4.6v-flash）。`,
+          duration: Date.now() - startedAt,
         }
       }
       return {
@@ -503,12 +541,13 @@ export async function generateReply(history, linkText, documentIds = [], searchB
             `接口返回：${message}\n\n` +
             `可以：1) 在「设置 → 模型设置 → 副模型 API」配置视觉模型；2) 或先把图片里的文字复制成文本再发送。\n\n` +
             `提示：图片理解依赖模型视觉能力，不是本地 OCR。`,
+        duration: Date.now() - startedAt,
       }
     }
     const failedNote = fellBackToSecondary
       ? `主模型失败后已尝试副模型，副模型仍失败。\n\n`
       : ''
-    return { content: `❌ 错误: ${failedNote}${message}` }
+    return { content: `❌ 错误: ${failedNote}${message}`, duration: Date.now() - startedAt }
   } finally {
     isLoading.value = false
     streamingContent.value = ''

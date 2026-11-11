@@ -34,16 +34,26 @@
         </button>
       </div>
 
-      <div v-if="liveThinking" class="thinking-block">
-        <button class="thinking-toggle" @click="thinkOpen = !thinkOpen">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline :points="thinkOpen ? '6 15 12 9 18 15' : '9 18 15 12 9 6'"/></svg>
-          思考过程
+      <!-- 任务过程头部：已处理耗时 + 折叠开关 -->
+      <div v-if="message.role === 'assistant' && showProcessHeader" class="process-header">
+        <button v-if="hasProcess" class="process-toggle" type="button" @click="processOpen = !processOpen">
+          <span v-if="isStreaming" class="process-dot"></span>
+          <span class="process-time">{{ headerLabel }}</span>
+          <svg class="process-chevron" :class="{ open: processOpen }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
-        <div v-if="thinkOpen" class="thinking-content">
-          <MarkdownRenderer :content="liveThinking" symbol-style />
-          <span v-if="isStreaming && !liveContent" class="cursor-blink">▍</span>
-        </div>
+        <span v-else class="process-static">
+          <span v-if="isStreaming" class="process-dot"></span>
+          <span class="process-time">{{ headerLabel }}</span>
+        </span>
       </div>
+
+      <!-- 无工具分段的思考放在顶部；有分段时思考已交错进时间线 -->
+      <ThinkingRow
+        v-if="message.role === 'assistant' && liveThinking && !liveParts.length"
+        v-show="processOpen"
+        :content="liveThinking"
+        :live="isStreaming && !liveContent"
+      />
 
       <div v-if="message.role === 'user' && fileBlocks.length" class="file-blocks">
         <div v-for="(fb, fi) in fileBlocks" :key="fi" class="thinking-block file-block">
@@ -67,13 +77,21 @@
       </div>
 
       <template v-else-if="isStreaming">
-        <MessageParts v-if="liveParts.length" class="message-content" :parts="liveParts" />
+        <MessageParts v-if="liveParts.length" class="message-content" :parts="liveParts" :process-open="processOpen" />
+        <ThinkingRow
+          v-if="liveThinking && liveParts.length"
+          v-show="processOpen"
+          :content="liveThinking"
+          :live="!liveContent"
+        />
+        <div v-show="processOpen" class="gen-status">
+          <button class="gen-status-btn" type="button" @click="processOpen = !processOpen">
+            <span class="status-shimmer">{{ statusText }}</span>
+            <svg class="process-chevron" :class="{ open: processOpen }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+        </div>
         <div v-if="liveContent" class="message-content streaming-text">
           <MarkdownRenderer :content="liveContent" symbol-style />
-          <span class="cursor-blink">▍</span>
-        </div>
-        <div v-else-if="!liveThinking && !liveParts.length" class="typing-indicator">
-          <span></span><span></span><span></span>
         </div>
       </template>
 
@@ -81,11 +99,12 @@
         v-else-if="message.role === 'assistant' && message.parts?.length"
         class="message-content"
         :parts="message.parts"
+        :process-open="processOpen"
       />
 
       <template v-else>
         <!-- 旧消息回退：没有分段数据时沿用聚合执行链 -->
-        <ToolTrace v-if="message.role === 'assistant' && message.toolTrace?.length" :trace="message.toolTrace" />
+        <ToolTrace v-if="message.role === 'assistant' && message.toolTrace?.length" v-show="processOpen" :trace="message.toolTrace" />
         <div class="message-content">
           <MarkdownRenderer :content="displayContent" :symbol-style="message.role === 'assistant'" />
         </div>
@@ -155,10 +174,11 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed, nextTick, watch, onUnmounted } from 'vue'
 import MarkdownRenderer from '../common/MarkdownRenderer.vue'
 import MessageParts from './MessageParts.vue'
 import ToolTrace from './ToolTrace.vue'
+import ThinkingRow from './ThinkingRow.vue'
 import { useSettingsStore } from '../../stores/settings'
 import { useChatStore } from '../../stores/chat'
 import { useAssetsStore } from '../../stores/assets'
@@ -174,7 +194,6 @@ const props = defineProps({
   highlight: { type: Boolean, default: false },
 })
 
-const thinkOpen = ref(true)
 const editing = ref(false)
 const editText = ref('')
 const editTextarea = ref(null)
@@ -199,6 +218,59 @@ const liveContent = computed(() =>
 const liveParts = computed(() =>
   isStreaming.value ? chatStore.streamingParts : (props.message.parts || [])
 )
+
+// 任务过程折叠：只收起执行链与思考，正文始终可见
+const processOpen = ref(true)
+const nowTs = ref(Date.now())
+let elapsedTimer = null
+watch(isStreaming, streaming => {
+  clearInterval(elapsedTimer)
+  elapsedTimer = null
+  if (streaming) {
+    nowTs.value = Date.now()
+    elapsedTimer = setInterval(() => { nowTs.value = Date.now() }, 1000)
+  }
+}, { immediate: true })
+onUnmounted(() => clearInterval(elapsedTimer))
+
+const liveElapsed = computed(() =>
+  Math.max(0, nowTs.value - (chatStore.streamingStartedAt || props.message.ts || nowTs.value))
+)
+const processStepCount = computed(() =>
+  liveParts.value.reduce((sum, part) => sum + (part.type === 'trace' ? (part.steps?.length || 0) : 0), 0)
+)
+const hasProcess = computed(() =>
+  liveParts.value.some(part => part.type === 'trace' || part.type === 'thinking') ||
+  (!liveParts.value.length && !!liveThinking.value) ||
+  !!props.message.toolTrace?.length
+)
+const showProcessHeader = computed(() =>
+  props.message.role === 'assistant' && (isStreaming.value || Number(props.message.duration) > 0 || hasProcess.value)
+)
+const headerLabel = computed(() => {
+  if (isStreaming.value) return `已处理 ${fmtDuration(liveElapsed.value)}`
+  const ms = Number(props.message.duration) || 0
+  const time = ms > 0 ? `已处理 ${fmtDuration(ms)}` : '任务过程'
+  return processStepCount.value ? `${time} · ${processStepCount.value} 步` : time
+})
+const toolRunning = computed(() =>
+  liveParts.value.some(part => part.type === 'trace' && part.running)
+)
+const statusText = computed(() => {
+  if (toolRunning.value) return '正在执行工具'
+  if (liveThinking.value && !liveContent.value) return '深度思考中'
+  return '生成回复中'
+})
+
+function fmtDuration(ms) {
+  const s = Math.max(1, Math.round(ms / 1000))
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  const rs = s % 60
+  if (m < 60) return `${m}m${String(rs).padStart(2, '0')}s`
+  const h = Math.floor(m / 60)
+  return `${h}h${String(m % 60).padStart(2, '0')}m`
+}
 
 function startEdit() {
   editText.value = props.message.content || ''
@@ -383,29 +455,63 @@ function saveToAssets() {
 .message-content { line-height: 1.7; font-size: 14px; color: var(--text-primary); }
 .part-text + .part-text { margin-top: 10px; }
 
-/* 流式光标与等待指示 */
-.cursor-blink {
-  animation: blink 1s step-end infinite;
+/* 流式光标：贴在最后一个块级元素文末，避免单独占一行 */
+.streaming-text :deep(.markdown-body > *:last-child)::after {
+  content: '▍';
   color: var(--accent);
   font-weight: bold;
+  animation: blink 1s step-end infinite;
 }
 @keyframes blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }
 }
-.typing-indicator { display: flex; gap: 5px; padding: 8px 0; }
-.typing-indicator span {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--text-muted);
-  animation: typing-bounce 1.4s infinite ease-in-out both;
+
+/* 任务过程头部：已处理耗时 + 折叠开关 */
+.process-header { margin-bottom: 2px; }
+.process-toggle,
+.process-static {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 2px 6px 2px 2px; border: none; border-radius: 6px;
+  background: transparent; color: var(--text-subtle);
+  font-size: 11.5px; font-family: inherit; line-height: 1.5;
 }
-.typing-indicator span:nth-child(1) { animation-delay: -0.32s; }
-.typing-indicator span:nth-child(2) { animation-delay: -0.16s; }
-@keyframes typing-bounce {
-  0%, 80%, 100% { transform: scale(0); }
-  40% { transform: scale(1); }
+.process-toggle { cursor: pointer; transition: background 0.15s, color 0.15s; }
+.process-toggle:hover { background: var(--bg-hover); color: var(--text-secondary); }
+.process-time { font-variant-numeric: tabular-nums; }
+.process-chevron { transition: transform 0.15s; flex-shrink: 0; }
+.process-chevron:not(.open) { transform: rotate(-90deg); }
+.process-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent);
+  animation: process-pulse 1s ease-in-out infinite;
+}
+@keyframes process-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+/* 生成中的实时状态行（时间线末尾） */
+.gen-status { margin: 2px 0; }
+.gen-status-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 2px 6px 2px 2px; border: none; border-radius: 6px;
+  background: transparent; font-size: 12px; font-family: inherit;
+  color: var(--text-subtle); cursor: pointer;
+  transition: background 0.15s;
+}
+.gen-status-btn:hover { background: var(--bg-hover); }
+.status-shimmer {
+  background: linear-gradient(90deg, var(--text-subtle) 20%, var(--text-primary) 50%, var(--text-subtle) 80%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: status-shimmer 1.8s linear infinite;
+}
+@keyframes status-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }
 
 .message-actions { display: flex; gap: 2px; margin-top: 6px; opacity: 0; transition: opacity 0.2s; }

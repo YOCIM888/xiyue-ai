@@ -52,6 +52,7 @@ vi.mock('../src/services/workspace.js', () => ({
 vi.mock('../src/services/workspaceActivity.js', () => ({ recordAiFileAction: ws.recordAiFileAction }))
 
 const { executeToolCall, createWriteBudget, isParallelSafe } = await import('../src/services/tools.js')
+const workspace = await import('../src/services/workspace.js')
 
 const settings = { workModeEnabled: true }
 const run = (args, extra = {}) => executeToolCall({ tool: 'files', args }, { settings, ...extra })
@@ -434,5 +435,31 @@ describe('备份没做成时的写入文案', () => {
     expect(res.text).toContain('恢复前的内容没有备份成功')
     expect(res.text).toContain('这次回退无法再撤销')
     expect(res.text).not.toContain('也已存为新的历史版本')
+  })
+})
+
+describe('write/edit/append 的 diff 统计', () => {
+  it('write 新建时整份计为新增', async () => {
+    const res = await run({ action: 'write', path: 'a.js', content: 'one\ntwo' })
+    expect(res.ok).toBe(true)
+    expect(res.meta).toEqual({ created: true, stats: { added: 2, removed: 0 } })
+  })
+
+  it('write 覆盖时按行对比旧内容', async () => {
+    workspace.readFile.mockResolvedValueOnce({ text: 'one\ntwo\nthree', size: 13, truncated: false })
+    ws.writeFile.mockResolvedValueOnce({ created: false, size: 13, backedUp: true, backupWarning: '' })
+    const res = await run({ action: 'write', path: 'a.js', content: 'one\nTWO\nthree' })
+    expect(res.meta).toEqual({ created: false, stats: { added: 1, removed: 1 } })
+  })
+
+  it('edit 统计按替换次数放大', async () => {
+    ws.editFile.mockResolvedValueOnce({ replacements: 2, backedUp: true, backupWarning: '' })
+    const res = await run({ action: 'edit', path: 'a.js', old_text: 'x\ny', new_text: 'x\nz' })
+    expect(res.meta.stats).toEqual({ added: 2, removed: 2 })
+  })
+
+  it('append 只计新增行', async () => {
+    const res = await run({ action: 'append', path: 'a.js', content: 'a\nb' })
+    expect(res.meta.stats).toEqual({ added: 2, removed: 0 })
   })
 })

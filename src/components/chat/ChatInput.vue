@@ -147,12 +147,13 @@ const props = defineProps({ isLoading: { type: Boolean, default: false } })
 const emit = defineEmits(['send', 'stop'])
 
 // 与 TopBar 原逻辑一致：系统提示词 + 当前分支消息（含思考、工具执行链与流式中的临时内容）
+// 流式思考与分段里的历史思考互不重叠，分段按全量计
 const contextUsed = computed(() => {
   const system = chat.buildSystemPrompt()
   const live = chat.isLoading
     ? estimateTokens(chat.streamingThinking) +
       estimateTokens(chat.streamingContent) +
-      estimatePartsTokens(chat.streamingParts, { includeThinking: false })
+      estimatePartsTokens(chat.streamingParts)
     : 0
   return estimateMessagesTokens([
     ...(system ? [{ role: 'system', content: system }] : []),

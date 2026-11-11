@@ -1,7 +1,9 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
+import { computed, nextTick, watchEffect } from 'vue'
 import { kvStore, resetKv } from './helpers/kvMemory.js'
+import { estimateMessagesTokens, estimatePartsTokens, estimateTokens } from '../src/utils/contextUsage.js'
 
 vi.mock('../src/utils/kv', async () => (await import('./helpers/kvMemory.js')).kvMock)
 
@@ -750,7 +752,10 @@ describe('工具调用循环', () => {
     const trace = reply.parts[1]
     expect(trace).toMatchObject({ round: 1, running: false })
     expect(trace.status).toBeUndefined()
-    expect(trace.steps).toEqual([{ tool: 'files', ok: true, summary: 'files：列出目录', output: 'a.js\nb.js' }])
+    expect(trace.steps).toEqual([{
+      tool: 'files', ok: true, summary: 'files：列出目录', output: 'a.js\nb.js',
+      label: '列出目录', target: '', icon: 'folder', pending: false, running: false,
+    }])
     expect(trace.used).toMatchObject({ rounds: 1, roundsTotal: 20, files: 0 })
     expect(reply.parts[2].content).toBe('一共有两个文件。')
   })
@@ -958,6 +963,90 @@ describe('工具调用循环', () => {
     await store.sendMessage('两个一起做')
     expect(tools.executeToolCall).toHaveBeenCalledTimes(1)
     expect(tools.executeToolCall.mock.calls[0][0].args).toEqual({ action: 'list' })
+  })
+
+  it('回复携带耗时，落消息、入版本、切版本都保留', async () => {
+    const { store } = setup()
+    script('第一版回答')
+    await store.sendMessage('你好')
+    const msg = store.messages[1]
+    expect(typeof msg.duration).toBe('number')
+
+    script('第二版回答')
+    await store.regenerate(msg.id)
+    expect(msg.versions).toHaveLength(2)
+    expect(msg.versions.every(v => typeof v.duration === 'number')).toBe(true)
+    store.setVersion(msg.id, 0)
+    expect(msg.content).toBe('第一版回答')
+    expect(typeof msg.duration).toBe('number')
+  })
+
+  it('最终轮思考作为思考分段插在最终正文之前，轮内思考留在 trace', async () => {
+    const { store } = setup()
+    tools.executeToolCall.mockResolvedValue({ ok: true, text: '结果', record: '完成' })
+    script(
+      { text: `看一下目录\n${listCall}`, thinking: '第一轮思考' },
+      { text: '都完成了。', thinking: '最终轮思考' },
+    )
+    await store.sendMessage('看看目录')
+    const msg = store.messages[1]
+    expect(msg.parts.map(part => part.type)).toEqual(['text', 'trace', 'thinking', 'text'])
+    expect(msg.parts[2].content).toBe('最终轮思考')
+    expect(traceOf(msg).thinking).toBe('第一轮思考')
+    expect(msg.thinking).toBe('最终轮思考')
+  })
+
+  it('最终回答失败回退时不重复插入同源思考', async () => {
+    const { store } = setup()
+    tools.executeToolCall.mockResolvedValue({ ok: true, text: '结果', record: '完成' })
+    script(
+      { text: `看一下目录\n${listCall}`, thinking: '第一轮思考' },
+      { error: new Error('500 炸了') },
+    )
+    await store.sendMessage('看看目录')
+    const msg = store.messages[1]
+    expect(msg.parts.filter(part => part.type === 'thinking')).toHaveLength(0)
+    expect(traceOf(msg).thinking).toBe('第一轮思考')
+    expect(msg.thinking).toBe('第一轮思考')
+    expect(traceOf(msg).notes.join('')).toContain('最终回答生成失败')
+  })
+
+  it('write 的创建标签与 diff 统计落到步骤卡片', async () => {
+    const { store } = setup()
+    tools.executeToolCall.mockResolvedValue({
+      ok: true, text: '已创建 a.js', record: 'files：write a.js',
+      meta: { created: true, stats: { added: 3, removed: 0 } },
+    })
+    script(toolBlock('{"tool":"files","args":{"action":"write","path":"a.js","content":"x"}}'), '写好了。')
+    await store.sendMessage('写文件')
+    const step = traceOf(store.messages[1]).steps[0]
+    expect(step.label).toBe('创建')
+    expect(step.stats).toEqual({ added: 3, removed: 0 })
+  })
+
+  it('中止时挂起的步骤标记已中止，而不是失败或永远转圈', async () => {
+    const { store } = setup()
+    let n = 0
+    tools.executeToolCall.mockImplementation((call, { signal }) => {
+      n += 1
+      if (n === 1) return Promise.resolve({ ok: true, text: '好', record: '完成' })
+      return new Promise((resolve, reject) => {
+        signal.addEventListener('abort', () => reject(Object.assign(new Error('Aborted'), { name: 'AbortError' })))
+      })
+    })
+    script(toolBlock(
+      '{"tool":"files","args":{"action":"write","path":"a.js","content":"1"}}',
+      '{"tool":"files","args":{"action":"write","path":"b.js","content":"2"}}'
+    ))
+    const pending = store.sendMessage('写两个文件')
+    await flush(4)
+    store.stopGeneration()
+    await pending
+    const steps = traceOf(store.messages[1]).steps
+    expect(steps[0].ok).toBe(true)
+    expect(steps[1].aborted).toBe(true)
+    expect(steps[1].running).toBe(false)
+    expect(steps[1].pending).toBe(false)
   })
 })
 
@@ -1319,5 +1408,51 @@ describe('用量统计', () => {
     await store.sendMessage('看看这张图', ['data:1'])
     expect(usage.recordUsage).toHaveBeenCalledWith(expect.objectContaining({ model: 'glm-4.6v-flash' }))
     expect(store.messages[1].usage.model).toBe('glm-4.6v-flash')
+  })
+})
+
+describe('上下文圆环', () => {
+  // 与 ChatInput.contextUsed 同口径：系统提示词略去，只看消息 + 流式临时内容
+  function watchRing(store) {
+    const ring = computed(() => {
+      const live = store.isLoading
+        ? estimateTokens(store.streamingThinking) +
+          estimateTokens(store.streamingContent) +
+          estimatePartsTokens(store.streamingParts)
+        : 0
+      return estimateMessagesTokens(store.messages) + live
+    })
+    const seen = []
+    const stop = watchEffect(() => { seen.push(ring.value) })
+    return { seen, stop }
+  }
+
+  it('回复结束后思考仍全额计入，不能跌回只剩正文', async () => {
+    const { store } = setup()
+    const huge = '深'.repeat(120000)
+    script({ thinking: huge, text: '最终回答。' })
+    const { seen, stop } = watchRing(store)
+    await nextTick()
+    await store.sendMessage('深入思考这个问题')
+    await flush()
+    stop()
+    expect(Math.max(...seen)).toBeGreaterThan(80000)
+    expect(seen[seen.length - 1]).toBeGreaterThan(80000)
+  })
+
+  it('多轮工具结束后，每轮思考与执行链也仍计入', async () => {
+    const { store } = setup()
+    const thinkA = '甲'.repeat(80000)
+    const thinkB = '乙'.repeat(40000)
+    script(
+      { thinking: thinkA, text: toolBlock('{"tool":"files","args":{"action":"list"}}') },
+      { thinking: thinkB, text: '做完了。' }
+    )
+    const { seen, stop } = watchRing(store)
+    await nextTick()
+    await store.sendMessage('看看目录')
+    await flush()
+    stop()
+    expect(seen[seen.length - 1]).toBeGreaterThan(estimateTokens(thinkA) + estimateTokens(thinkB))
   })
 })

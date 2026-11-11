@@ -111,6 +111,92 @@ export function describeCall(call) {
   return `${call?.tool || ''}${label ? ` ${label}` : ''}`.slice(0, 120)
 }
 
+const FILES_DISPLAY = {
+  list: { label: '列出目录', icon: 'folder' },
+  search: { label: '搜索内容', icon: 'search' },
+  find: { label: '查找文件', icon: 'search' },
+  read: { label: '读取', icon: 'read' },
+  write: { label: '写入', icon: 'edit' },
+  edit: { label: '修改', icon: 'edit' },
+  append: { label: '追加', icon: 'edit' },
+  mkdir: { label: '创建目录', icon: 'folder' },
+  rename: { label: '重命名', icon: 'move' },
+  move: { label: '移动', icon: 'move' },
+  copy: { label: '复制', icon: 'copy' },
+  delete: { label: '删除', icon: 'trash' },
+  run: { label: '运行', icon: 'run' },
+  trash: { label: '查看回收站', icon: 'trash' },
+  restore: { label: '恢复文件', icon: 'clock' },
+  purge: { label: '彻底删除', icon: 'trash' },
+  empty_trash: { label: '清空回收站', icon: 'trash' },
+  history: { label: '历史版本', icon: 'clock' },
+  history_read: { label: '读取历史版本', icon: 'clock' },
+  history_restore: { label: '恢复历史版本', icon: 'clock' },
+  zip: { label: '打包', icon: 'archive' },
+  unzip: { label: '解压', icon: 'archive' },
+}
+
+const BROWSER_DISPLAY = {
+  open: '打开网页',
+  read: '读取页面',
+  click: '点击',
+  type: '填写',
+  scroll: '滚动',
+  press: '按键',
+  back: '后退',
+  forward: '前进',
+  screenshot: '截图',
+}
+
+const TOOL_DISPLAY = {
+  search_web: { label: '联网搜索', icon: 'globe' },
+  read_document: { label: '读取文档', icon: 'doc' },
+  browser: { label: '浏览器', icon: 'globe' },
+  preview: { label: '预览验收', icon: 'preview' },
+  calculate: { label: '本地计算', icon: 'calc' },
+  draw_chart: { label: '绘制图表', icon: 'chart' },
+  generate_image: { label: '生成图片', icon: 'image' },
+  export_conversation: { label: '导出对话', icon: 'export' },
+  __invalid__: { label: '无效调用', icon: 'warning' },
+}
+
+function shortTarget(value, max = 80) {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim()
+  return text.length > max ? `${text.slice(0, max)}…` : text
+}
+
+/** 时间线单行条目的人类可读信息：动作标签 + 目标 + 图标键 */
+export function callDisplay(call) {
+  const args = call?.args || {}
+  if (call?.tool === 'files') {
+    const action = String(args.action || '').toLowerCase()
+    const base = FILES_DISPLAY[action] || { label: '文件操作', icon: 'tool' }
+    const path = String(args.path || args.file || '').trim()
+    const dest = String(args.to ?? args.new_name ?? args.newName ?? '').trim()
+    let target = path || shortTarget(args.query ?? args.name ?? args.version ?? '')
+    if (['rename', 'move', 'copy'].includes(action) && dest) target = `${path} → ${dest}`
+    if (action === 'run' && !path && args.code) target = '内联代码'
+    return { label: base.label, icon: base.icon, target: shortTarget(target) }
+  }
+  const base = TOOL_DISPLAY[call?.tool] || { label: call?.tool || '工具', icon: 'tool' }
+  let target
+  switch (call?.tool) {
+    case 'search_web': target = args.query; break
+    case 'read_document': target = args.query || args.title; break
+    case 'browser': target = args.url || args.selector || args.text || (args.ref != null ? `ref ${args.ref}` : ''); break
+    case 'preview': target = args.path || args.selector || args.text || (args.ref != null ? `ref ${args.ref}` : ''); break
+    case 'calculate': target = /python/i.test(String(args.lang || '')) ? 'Python' : 'JavaScript'; break
+    case 'draw_chart': target = args.title || args.type; break
+    case 'generate_image': target = args.prompt; break
+    case 'export_conversation': target = args.format; break
+    default: target = args.path || args.query || args.url || ''
+  }
+  const label = call?.tool === 'browser'
+    ? (BROWSER_DISPLAY[String(args.action || '').toLowerCase()] || base.label)
+    : base.label
+  return { label, icon: base.icon, target: shortTarget(target) }
+}
+
 /** 生成系统提示里的工具说明；没有可用工具时返回空字符串 */
 export function buildToolPrompt(settings) {
   const tools = []

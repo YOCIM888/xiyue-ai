@@ -11,6 +11,12 @@ import {
 import { recordAiFileAction } from '../workspaceActivity'
 import { clampInt, failure, refused, success, truncate } from './protocol'
 import { runWorkspaceModules } from './sandboxModules'
+import { diffLines, diffStats } from '../../utils/lineDiff'
+
+const lineCount = value => {
+  const text = String(value ?? '')
+  return text === '' ? 0 : text.split('\n').length
+}
 
 const FILES_ACTION_LABELS = {
   list: '列出目录',
@@ -223,12 +229,19 @@ export async function runFiles(args, { onStatus, budget, settings, signal } = {}
           return failure('write 需要 content 参数（文件全文）')
         }
         budget?.charge(String(args.content).length)
+        // 覆盖前取一次旧内容，只用于时间线的 +N -N 展示；取不到不影响写入
+        let before = ''
+        try { before = (await readFile(path)).text } catch { before = '' }
         const written = await writeFile(path, args.content, { force: args.force === true })
         recordAiFileAction('write', path)
-        return success(
-          `已${written.created ? '创建' : '覆盖'} ${path}（${formatBytes(written.size)}）。${backupNote(written)}`,
-          `files：write ${path}（${written.created ? '新建' : '覆盖'}，${formatBytes(written.size)}）`
-        )
+        const stats = diffStats(diffLines(before, String(args.content)).ops)
+        return {
+          ...success(
+            `已${written.created ? '创建' : '覆盖'} ${path}（${formatBytes(written.size)}）。${backupNote(written)}`,
+            `files：write ${path}（${written.created ? '新建' : '覆盖'}，${formatBytes(written.size)}）`
+          ),
+          meta: { created: written.created, stats },
+        }
       }
       case 'edit': {
         budget?.charge(String(args.new_text ?? args.newText ?? '').length)
@@ -237,10 +250,18 @@ export async function runFiles(args, { onStatus, budget, settings, signal } = {}
           force: args.force === true,
         })
         recordAiFileAction('edit', path)
-        return success(
-          `已修改 ${path}，替换 ${edited.replacements} 处。${backupNote(edited)}`,
-          `files：edit ${path}（${edited.replacements} 处）`
-        )
+        const per = diffStats(diffLines(
+          String(args.old_text ?? args.oldText ?? ''),
+          String(args.new_text ?? args.newText ?? '')
+        ).ops)
+        const stats = { added: per.added * edited.replacements, removed: per.removed * edited.replacements }
+        return {
+          ...success(
+            `已修改 ${path}，替换 ${edited.replacements} 处。${backupNote(edited)}`,
+            `files：edit ${path}（${edited.replacements} 处）`
+          ),
+          meta: { stats },
+        }
       }
       case 'append': {
         if (typeof args.content !== 'string' && typeof args.content !== 'number') {
@@ -249,10 +270,13 @@ export async function runFiles(args, { onStatus, budget, settings, signal } = {}
         budget?.charge(String(args.content).length)
         const appended = await appendFile(path, args.content, { force: args.force === true })
         recordAiFileAction('append', path)
-        return success(
-          `已向 ${path} 追加内容（当前 ${formatBytes(appended.size)}）。${backupNote(appended)}`,
-          `files：append ${path}（${formatBytes(appended.size)}）`
-        )
+        return {
+          ...success(
+            `已向 ${path} 追加内容（当前 ${formatBytes(appended.size)}）。${backupNote(appended)}`,
+            `files：append ${path}（${formatBytes(appended.size)}）`
+          ),
+          meta: { stats: { added: lineCount(args.content), removed: 0 } },
+        }
       }
       case 'mkdir': {
         await makeDir(path)

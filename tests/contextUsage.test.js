@@ -49,12 +49,28 @@ describe('estimateMessageTokens', () => {
     expect(estimateMessageTokens(message)).toBe(17)
   })
 
-  it('已有完整思考时不再重复累计分段的思考快照', () => {
-    const trace = { type: 'trace', thinking: 'x'.repeat(400), steps: [] }
-    const withThinking = { content: 'a', thinking: 'b', parts: [trace] }
-    const withoutThinking = { content: 'a', parts: [trace] }
-    expect(estimateMessageTokens(withThinking)).toBe(4 + 1 + 1 + 6)
-    expect(estimateMessageTokens(withoutThinking)).toBe(4 + 1 + 6 + 100)
+  it('同源思考不重复累计：顶层/思考分段与执行链思考同文时去重', () => {
+    const same = 'x'.repeat(400)
+    const trace = { type: 'trace', thinking: same, steps: [] }
+    const dupTop = { content: 'a', thinking: same, parts: [trace] }
+    const dupPart = { content: 'a', parts: [trace, { type: 'thinking', content: same }] }
+    const distinct = { content: 'a', thinking: 'b', parts: [trace] }
+    expect(estimateMessageTokens(dupTop)).toBe(4 + 1 + 100 + 6)
+    expect(estimateMessageTokens(dupPart)).toBe(4 + 1 + 100 + 6)
+    expect(estimateMessageTokens(distinct)).toBe(4 + 1 + 1 + 6 + 100)
+  })
+
+  it('多轮执行链的思考逐轮累计', () => {
+    const message = {
+      content: 'ok',
+      parts: [
+        { type: 'trace', thinking: 'aaaa', steps: [] },
+        { type: 'trace', thinking: 'bbbb', steps: [] },
+        { type: 'thinking', content: 'cccc' },
+      ],
+    }
+    // 4 基础 + 1 正文 + 1 思考分段 + 6*2 轮次开销 + 1+1 历史轮思考
+    expect(estimateMessageTokens(message)).toBe(4 + 1 + 1 + 12 + 2)
   })
 
   it('兼容旧版 toolTrace', () => {

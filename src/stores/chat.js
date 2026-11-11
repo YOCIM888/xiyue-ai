@@ -35,6 +35,8 @@ export const useChatStore = defineStore('chat', () => {
   const streamingParts = ref([])
   // 流式回复已经在消息列表里占位，收尾时只更新字段，避免整条消息重建
   const streamingMessageId = ref(null)
+  // 本轮生成的开始时刻，驱动消息头部的「已处理 …」实时计时
+  const streamingStartedAt = ref(0)
   const isLoading = ref(false)
   const searching = ref(false)
   const imageGenerating = ref(false)
@@ -48,6 +50,7 @@ export const useChatStore = defineStore('chat', () => {
     streamingContent,
     streamingThinking,
     streamingParts,
+    streamingStartedAt,
     abortController,
   }
 
@@ -140,7 +143,8 @@ export const useChatStore = defineStore('chat', () => {
     }
     branch.messages.push(msg)
     streamingMessageId.value = msg.id
-    return msg
+    // 必须返回响应式代理：收尾时若通过原始对象写字段，不会触发依赖更新（上下文圆环会停在空占位的数值）
+    return branch.messages[branch.messages.length - 1]
   }
 
   function finishStreamingPlaceholder(branch, msg, reply, prefix = '') {
@@ -150,6 +154,7 @@ export const useChatStore = defineStore('chat', () => {
     msg.content = prefix ? `${prefix}\n\n${reply.content}` : reply.content
     msg.images = reply.images
     msg.usage = reply.usage
+    msg.duration = reply.duration
     delete msg.streaming
     if (streamingMessageId.value === msg.id) streamingMessageId.value = null
     if (branch && !branch.messages.includes(msg)) branch.messages.push(msg)
@@ -396,13 +401,14 @@ export const useChatStore = defineStore('chat', () => {
 
     const versions = Array.isArray(msg.versions) && msg.versions.length
       ? msg.versions.slice()
-      : [{ content: msg.content, thinking: msg.thinking, toolTrace: msg.toolTrace, parts: msg.parts, ts: msg.ts || Date.now() }]
-    versions.push({ content: reply.content, thinking: reply.thinking, parts: reply.parts, ts: Date.now() })
+      : [{ content: msg.content, thinking: msg.thinking, toolTrace: msg.toolTrace, parts: msg.parts, duration: msg.duration, ts: msg.ts || Date.now() }]
+    versions.push({ content: reply.content, thinking: reply.thinking, parts: reply.parts, duration: reply.duration, ts: Date.now() })
     msg.versions = versions
     msg.activeVersion = versions.length - 1
     msg.content = reply.content
     msg.thinking = reply.thinking
     msg.parts = reply.parts
+    msg.duration = reply.duration
     delete msg.streaming
     if (streamingMessageId.value === msg.id) streamingMessageId.value = null
     // 旧版工具链字段已被 parts 取代，避免旧数据残留显示
@@ -461,6 +467,7 @@ export const useChatStore = defineStore('chat', () => {
     msg.thinking = v.thinking
     msg.toolTrace = v.toolTrace
     msg.parts = v.parts
+    msg.duration = v.duration
     saveMessages(topicId)
   }
 
@@ -541,7 +548,7 @@ export const useChatStore = defineStore('chat', () => {
 
   return {
     conversation, branches, activeBranchId, activeBranch, messages,
-    streamingContent, streamingThinking, streamingParts, streamingMessageId, isLoading, searching, imageGenerating,
+    streamingContent, streamingThinking, streamingParts, streamingMessageId, streamingStartedAt, isLoading, searching, imageGenerating,
     loadMessages, saveMessages, sendMessage, stopGeneration, clearMessages,
     regenerate, regenerateWithSecondary, setVersion, branchFromMessage, editAndRegenerate, switchBranch,
     continueResponse, deleteMessage, buildSystemPrompt,
