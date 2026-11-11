@@ -760,6 +760,36 @@ describe('工具调用循环', () => {
     expect(reply.parts[2].content).toBe('一共有两个文件。')
   })
 
+  it('模型漏写围栏把调用吐成裸 JSON 时照样执行并继续，不会中断', async () => {
+    const { store } = setup()
+    tools.executeToolCall.mockResolvedValue({ ok: true, text: '文件内容', record: 'files：read' })
+    // 复刻 BUG：多个裸 JSON 挤在同一行，以前会被当正文渲染，工具循环直接 break
+    const bare = [
+      '{"tool":"files","args":{"action":"read","path":"js/core.js"}}',
+      '{"tool":"files","args":{"action":"read","path":"css/style.css"}}',
+    ].join(' ')
+    script(bare, '两个文件都读完了。')
+    await store.sendMessage('继续写项目')
+
+    expect(tools.executeToolCall).toHaveBeenCalledTimes(2)
+    expect(chatCalls()).toHaveLength(2)
+    expect(api.calls[1].messages.at(-1).content).toContain('【工具执行结果】')
+    const reply = store.messages[1]
+    expect(reply.content).toBe('两个文件都读完了。')
+    expect(reply.content).not.toContain('"tool"')
+    expect(traceOf(reply).steps).toHaveLength(2)
+  })
+
+  it('输出被 max_tokens 截断时明确告知用户', async () => {
+    const { store } = setup()
+    script({
+      text: '我先读文件，读到一半就',
+      usage: { prompt: 10, completion: 20, total: 30, finishReason: 'length' },
+    })
+    await store.sendMessage('写点东西')
+    expect(store.messages[1].content).toContain('最大输出长度')
+  })
+
   it('工具失败时把失败原因回灌，并附上正确写法', async () => {
     const { store } = setup()
     tools.executeToolCall.mockResolvedValue({ ok: false, text: '缺少参数 path', record: '失败：缺少参数' })

@@ -16,6 +16,7 @@ import {
   executeToolCall,
   stripToolBlocks,
   stripStreamingToolBlocks,
+  stripIncompleteToolCalls,
   createWriteBudget,
   toolUsageHint,
   shouldShowUsageHint,
@@ -93,6 +94,8 @@ export async function generateReply(history, linkText, documentIds = [], searchB
 
   let fullContent = ''
   let fullThinking = ''
+  // 最后一次请求的结束原因：finish_reason=length 表示被 max_tokens 截断
+  let lastFinishReason = null
   const parts = []
   const usageList = []
   let imageNotice = ''
@@ -155,6 +158,7 @@ export async function generateReply(history, linkText, documentIds = [], searchB
       attemptedSecondary = secondary
       fullContent = ''
       fullThinking = ''
+      lastFinishReason = null
       streamingContent.value = ''
       streamingThinking.value = ''
       const usage = await sendChatRequest({
@@ -180,8 +184,14 @@ export async function generateReply(history, linkText, documentIds = [], searchB
         },
       })
       // 服务商返回 usage 时优先采用；没有返回则保留 null，由下方按字符估算
-      const usageEntry = usage ? { ...usage, model, estimated: false } : null
-      if (usageEntry) usageList.push(usageEntry)
+      lastFinishReason = usage?.finishReason || null
+      const usageEntry = usage && (usage.prompt || usage.completion || usage.total)
+        ? { ...usage, model, estimated: false }
+        : null
+      if (usageEntry) {
+        delete usageEntry.finishReason
+        usageList.push(usageEntry)
+      }
     }
 
     const askMain = (messages = apiMessages) => requestChat({
@@ -433,6 +443,9 @@ export async function generateReply(history, linkText, documentIds = [], searchB
       }
     }
 
+    // 没写完的裸 JSON / 半截 ```tool 围栏不该留在正文里（模型被截断时尤其常见）
+    fullContent = stripIncompleteToolCalls(fullContent)
+
     // 达到轮次上限后仍有工具调用：移除未执行的代码块，避免把 JSON 展示给用户
     if (extractToolCalls(fullContent, toolCallLimit).length) {
       fullContent = stripToolBlocks(fullContent)
@@ -441,6 +454,9 @@ export async function generateReply(history, linkText, documentIds = [], searchB
 
     const notices = []
     if (imageNotice) notices.push(imageNotice)
+    if (lastFinishReason === 'length') {
+      notices.push('回答被「最大输出长度」截断，最后一段可能不完整；可在设置里调大 max_tokens 后重试。')
+    }
     if (fellBackToSecondary) {
       notices.push(`主模型「${settings.model}」未能处理图片，已自动切换到副模型「${settings.secondaryModel}」。`)
     }

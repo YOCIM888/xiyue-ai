@@ -43,3 +43,22 @@ describe('stripStreamingToolBlocks', () => {
     expect(stripStreamingToolBlocks(content)).toBe(content)
   })
 })
+
+describe('裸 JSON 工具调用的流式隐藏', () => {
+  it('完整的裸调用不闪现', () => {
+    expect(stripStreamingToolBlocks('读文件\n{"tool":"files","args":{"action":"read","path":"a.js"}}'))
+      .toBe('读文件')
+  })
+  it('刚吐出半截键名就藏起来', () => {
+    expect(stripStreamingToolBlocks('读文件\n{"tool')).toBe('读文件')
+    expect(stripStreamingToolBlocks('读文件\n{"tool":"files","args":{"que')).toBe('读文件')
+  })
+  it('同行第二个裸调用照样隐藏', () => {
+    const content = '{"tool":"files","args":{"action":"list"}} {"tool":"files","args":{"action":"list"}}'
+    expect(stripStreamingToolBlocks(content)).toBe('')
+  })
+  it('普通裸 JSON 数据不被吞掉', () => {
+    const content = '配置：{"host":"127.0.0.1","port":8080}'
+    expect(stripStreamingToolBlocks(content)).toBe(content)
+  })
+})

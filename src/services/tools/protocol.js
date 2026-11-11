@@ -276,6 +276,7 @@ export function buildToolPrompt(settings) {
   })
   lines.push(
     '规则：拿到工具结果后再继续回答；不要编造工具结果；不要重复调用同一个工具；调用失败时按回灌的正确写法改，原样重发没有用；简单问题不要调用工具。',
+    '输出格式（必须遵守）：每个调用单独一个 tool 代码块，块内只放一行完整 JSON，围栏要正确闭合；不要在正文里裸写 {"tool":...}，不要把多个 JSON 拼在同一行，也不要漏写引号或重复键。只有放在 tool 代码块里的调用才会被识别并执行。',
     '用户明确要求搜索、生成图片或导出时，仍然优先使用对应工具。'
   )
   if (settings.browserSkillEnabled) {
@@ -304,6 +305,11 @@ const TOOL_FENCE_LANGS = new Set(['tool', 'tool-call', 'tool_call'])
 const CODE_FENCE_RE = /```([a-zA-Z0-9_-]*)[ \t]*\n([\s\S]*?)```/gi
 const SANDBOX_FENCE_RE = /```(sandbox-js|sandbox-python|calc-js|calc-python)[^\n]*\n([\s\S]*?)```/gi
 const CALL_NAME_FIELD_RE = /"(?:tool|name)"\s*:\s*"([^"]+)"/i
+const BARE_OBJECT_RE = /\{\s*"/g
+// 讲解/示例语境里的裸 JSON 不要当成真调用执行
+const EXAMPLE_PREFIX_RE = /(示例|例如|比如|举例|格式|写法|用法|example|e\.g\.|such as|format)/i
+// 未闭合的 tool 围栏标记（配合下面把围栏里的 JSON 当裸调用回收）
+const OPEN_TOOL_FENCE_MARK_RE = /(^|\n)```(?:tool|tool-call|tool_call)[ \t]*(?=\n|$)/gi
 
 /** 解析块内容里的调用意图，返回 null 表示这段内容不是调用对象 */
 function parseCallBody(raw) {
@@ -321,33 +327,145 @@ function parseCallBody(raw) {
   }
 }
 
+/** 列出所有 ``` 围栏区间（含末尾未闭合的那个），裸 JSON 扫描要避开代码块 */
+function fenceRegions(text) {
+  const marks = [...text.matchAll(/```/g)].map(match => match.index)
+  const regions = []
+  for (let i = 0; i < marks.length; i += 2) {
+    const start = marks[i]
+    const closed = i + 1 < marks.length
+    const end = closed ? marks[i + 1] + 3 : text.length
+    const lang = (text.slice(start + 3, end).match(/^([a-zA-Z0-9_-]*)/)?.[1] || '').toLowerCase()
+    regions.push({ start, end, closed, lang })
+  }
+  return regions
+}
+
+/** 从 start 处的 { 开始括号配对，返回完整 JSON 的结束下标；没写完返回 -1 */
+function findJsonEnd(text, start) {
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = start; i < text.length; i += 1) {
+    const ch = text[i]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') { inString = true; continue }
+    if (ch === '{' || ch === '[') depth += 1
+    else if (ch === '}' || ch === ']') {
+      depth -= 1
+      if (depth === 0) return i + 1
+      if (depth < 0) return -1
+    }
+  }
+  return -1
+}
+
+/** 裸片段是否一看就是在写工具调用；流式期靠它把半截 JSON 提前藏起来 */
+function looksLikeCallFragment(raw, partial = false) {
+  if (!/^\{\s*"/.test(raw)) return false
+  const name = CALL_NAME_FIELD_RE.exec(raw)?.[1]?.toLowerCase() || ''
+  if (name) return !!TOOL_ALIASES[name] || /"(?:args|arguments)"\s*:/.test(raw)
+  if (/^\{\s*"(?:tool|name|args|arguments)"\s*:/i.test(raw)) return true
+  // 刚打出半截键名（{"to / {"tool）时提前隐藏，避免流式闪现
+  return partial && /^\{\s*"(?:t|to|too|tool|n|na|nam|name|a|ar|arg|args|arguments)"?$/i.test(raw)
+}
+
+/**
+ * 兜底：模型忘了写 ```tool，直接把 {"tool":...,"args":...} 吐在正文里。
+ * 只认「工具名是已知别名」或「带 args 的调用形状」的对象，普通 JSON 数据、代码块里的示例一概不碰。
+ * 未闭合的 tool 围栏也走这里回收：围栏还没打完就 EOS 时，里面的完整 JSON 照样能执行。
+ */
+function collectBareCallBlocks(text, regions) {
+  const blocks = []
+  // 流式阶段每个 chunk 都会重扫一遍，先用廉价判断挡掉绝大多数普通回答
+  if (!/"(?:tool|name|args|arguments)/i.test(text)) return blocks
+  const masked = regions
+    .filter(region => region.closed || !TOOL_FENCE_LANGS.has(region.lang))
+    .map(region => [region.start, region.end])
+  const inMasked = index => masked.some(([from, to]) => index >= from && index < to)
+
+  let cursor = 0
+  for (const match of text.matchAll(BARE_OBJECT_RE)) {
+    const start = match.index
+    if (start < cursor || inMasked(start)) continue
+    if (start > 0 && text[start - 1] === '`') continue // 行内代码里的示例
+    const lineStart = text.lastIndexOf('\n', start - 1) + 1
+    if (EXAMPLE_PREFIX_RE.test(text.slice(lineStart, start))) continue
+
+    const end = findJsonEnd(text, start)
+    const raw = end > 0 ? text.slice(start, end) : text.slice(start)
+    if (end > 0) cursor = end // 完整对象内部不再重复扫描
+    if (!looksLikeCallFragment(raw, end < 0)) continue
+
+    if (end < 0) {
+      // 还没写完（或被 max_tokens 截断）：只藏起来，不当成调用，避免空转重试
+      cursor = text.length
+      blocks.push({ start, end: text.length, raw, explicitFence: false, hideOnly: true })
+      continue
+    }
+    const parsed = parseCallBody(raw)
+    const tool = parsed ? TOOL_ALIASES[parsed.name] || '' : ''
+    if (tool) {
+      blocks.push({ start, end, raw, explicitFence: false, parsed, tool })
+      continue
+    }
+    // 闭合了却解析失败 / 工具名不认识：给模型一次格式反馈，而不是让回答静默结束
+    if (CALL_NAME_FIELD_RE.test(raw) && /"(?:args|arguments)"\s*:/.test(raw)) {
+      blocks.push({
+        start, end, raw,
+        explicitFence: false, invalid: true,
+        error: '工具调用 JSON 解析失败或工具名未识别',
+      })
+    }
+  }
+  return blocks
+}
+
 /**
  * 找出回答里所有可能是工具调用的代码块。
  * tool 围栏一律算调用（写错也要报错）；json 围栏只在内容确实是已知工具时才算，
  * 且只在整段回答没有任何 tool 围栏时才启用——避免把「讲解调用格式」的 JSON 示例当成真调用执行。
+ * 裸 JSON 作为兜底按出现位置并入，保证多段调用的顺序与展示一致。
  */
 function collectCallBlocks(text) {
   const explicit = []
   const loose = []
+  const regions = fenceRegions(text)
   for (const match of text.matchAll(CODE_FENCE_RE)) {
     const lang = String(match[1] || '').toLowerCase()
     const explicitFence = TOOL_FENCE_LANGS.has(lang)
     if (!explicitFence && lang !== 'json') continue
     const raw = match[2].trim()
     const parsed = parseCallBody(raw)
-    const block = { full: match[0], raw, explicitFence, parsed, tool: parsed ? TOOL_ALIASES[parsed.name] || '' : '' }
+    const block = {
+      start: match.index,
+      end: match.index + match[0].length,
+      raw, explicitFence, parsed,
+      tool: parsed ? TOOL_ALIASES[parsed.name] || '' : '',
+    }
     ;(explicitFence ? explicit : loose).push(block)
   }
-  return explicit.length ? explicit : loose
+  const fenced = explicit.length ? explicit : loose
+  const bare = collectBareCallBlocks(text, regions)
+  return [...fenced, ...bare].sort((a, b) => a.start - b.start)
 }
 
 /** calls 与 removable 同源，杜绝「执行了却把 JSON 展示给用户」或反过来 */
-function findToolCalls(text, limit) {
+function findToolCalls(text, limit, { strip = false } = {}) {
   const calls = []
   const removable = []
   for (const block of collectCallBlocks(text)) {
-    if (!block.explicitFence && !block.tool) continue
-    removable.push(block.full)
+    if (block.hideOnly) {
+      if (strip) removable.push(block)
+      continue
+    }
+    if (!block.explicitFence && !block.tool && !block.invalid) continue
+    removable.push(block)
     if (calls.length >= limit) continue
     if (block.tool) {
       calls.push({ tool: block.tool, args: block.parsed.args })
@@ -357,18 +475,19 @@ function findToolCalls(text, limit) {
       tool: '__invalid__',
       args: {},
       raw: block.raw,
-      error: block.parsed ? `未知工具：${block.parsed.name || '空'}` : '工具调用 JSON 解析失败',
+      error: block.error || (block.parsed ? `未知工具：${block.parsed.name || '空'}` : '工具调用 JSON 解析失败'),
     })
   }
   return { calls, removable }
 }
 
-/** 提取模型回复中的工具调用，兼容旧 sandbox 代码块 */
+/** 提取模型回复中的工具调用，兼容旧 sandbox 代码块与裸 JSON */
 export function extractToolCalls(content, maxCalls = MAX_CALLS_PER_ROUND) {
   const limit = Math.max(1, Math.min(200, Number(maxCalls) || MAX_CALLS_PER_ROUND))
-  const { calls } = findToolCalls(String(content || ''), limit)
+  const text = String(content || '')
+  const { calls } = findToolCalls(text, limit)
 
-  for (const match of String(content || '').matchAll(SANDBOX_FENCE_RE)) {
+  for (const match of text.matchAll(SANDBOX_FENCE_RE)) {
     if (calls.length >= limit) break
     calls.push({
       tool: 'calculate',
@@ -379,13 +498,37 @@ export function extractToolCalls(content, maxCalls = MAX_CALLS_PER_ROUND) {
   return calls
 }
 
+/** 按位置从后往前挖掉片段，避免同内容重复出现时误删到前面的示例 */
+function removeByRange(text, blocks) {
+  let stripped = text
+  for (const block of [...blocks].sort((a, b) => b.start - a.start)) {
+    stripped = stripped.slice(0, block.start) + stripped.slice(block.end)
+  }
+  return stripped
+}
+
 /** 去掉未执行的工具代码块，避免最终回答里残留 JSON */
 export function stripToolBlocks(content) {
   const text = String(content || '')
-  const { removable } = findToolCalls(text, Number.POSITIVE_INFINITY)
-  let stripped = text
-  for (const block of removable) stripped = stripped.replace(block, '')
-  return stripped.replace(SANDBOX_FENCE_RE, '').trim()
+  const { removable } = findToolCalls(text, Number.POSITIVE_INFINITY, { strip: true })
+  return removeByRange(text, removable)
+    .replace(SANDBOX_FENCE_RE, '')
+    .replace(OPEN_TOOL_FENCE_MARK_RE, '$1')
+    .trim()
+}
+
+/**
+ * 收尾清理：只藏掉没写完的裸调用碎片和残留的 ```tool 标记。
+ * 正常正文、代码块里的 JSON 示例一律不动，所以可以在每条回答上无条件调用。
+ */
+export function stripIncompleteToolCalls(content) {
+  const text = String(content || '')
+  const fragments = collectCallBlocks(text).filter(block => block.hideOnly)
+  const hasOpenFence = /(^|\n)```(?:tool|tool-call|tool_call)[ \t]*(?=\n|$)/i.test(text)
+  if (!fragments.length && !hasOpenFence) return text
+  return removeByRange(text, fragments)
+    .replace(OPEN_TOOL_FENCE_MARK_RE, '$1')
+    .trimEnd()
 }
 
 const STREAMING_FENCE_WORDS = [

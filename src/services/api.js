@@ -89,6 +89,10 @@ async function openaiChat({ apiBase, apiKey, model, temperature, maxTokens, topP
   const decoder = new TextDecoder()
   let buffer = ''
   let usage = null
+  let finishReason = null
+  // finish_reason=length 说明被 max_tokens 截断；挂在 usage 上带回去，不能新造 chunk 类型
+  //（其它调用方只取 chunk.text，多发一个 chunk 会把 undefined 拼进正文）
+  const doneUsage = () => (finishReason ? { ...(usage || {}), finishReason } : usage)
 
   while (true) {
     const { done, value } = await reader.read()
@@ -100,7 +104,7 @@ async function openaiChat({ apiBase, apiKey, model, temperature, maxTokens, topP
       const t = line.trim()
       if (!t || !t.startsWith('data:')) continue
       const data = t.slice(5).trim()
-      if (data === '[DONE]') return usage
+      if (data === '[DONE]') return doneUsage()
       try {
         const j = JSON.parse(data)
         if (j.usage) {
@@ -108,16 +112,18 @@ async function openaiChat({ apiBase, apiKey, model, temperature, maxTokens, topP
           const completion = Number(j.usage.completion_tokens) || 0
           usage = { prompt, completion, total: Number(j.usage.total_tokens) || prompt + completion }
         }
-        const delta = j.choices?.[0]?.delta
+        const choice = j.choices?.[0]
+        if (choice?.finish_reason) finishReason = choice.finish_reason
+        const delta = choice?.delta
         if (delta?.reasoning_content) {
           onChunk({ type: 'thinking', text: delta.reasoning_content })
         }
-        const c = delta?.content || j.choices?.[0]?.message?.content
+        const c = delta?.content || choice?.message?.content
         if (c) onChunk({ type: 'content', text: c })
       } catch { /* skip */ }
     }
   }
-  return usage
+  return doneUsage()
 }
 
 /** Ollama 原生格式 (NDJSON) */
@@ -177,7 +183,8 @@ async function ollamaChat({ model, temperature, maxTokens, contextLength, topP, 
           const prompt = Number(j.prompt_eval_count) || 0
           const completion = Number(j.eval_count) || 0
           if (prompt || completion) usage = { prompt, completion, total: prompt + completion }
-          return usage
+          const reason = j.done_reason === 'length' || j.done_reason === 'max_tokens' ? 'length' : null
+          return reason ? { ...(usage || {}), finishReason: reason } : usage
         }
 
         // 新版 Ollama 可能将思考内容放在独立字段

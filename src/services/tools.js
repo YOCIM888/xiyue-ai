@@ -1,6 +1,7 @@
 /**
  * 工具调用协议与执行器（对外入口）。
- * 模型通过 ```tool JSON 代码块显式选择工具，前端执行后把真实结果回传。
+ * 模型通过 ```tool JSON 代码块显式选择工具，前端执行后把真实结果回传；
+ * 模型漏写围栏、直接吐裸 JSON 时由解析层兜底识别。
  * 具体实现按领域拆在 ./tools/ 下，这里只保留公共导出与分发。
  */
 import { failure, refused, truncate } from './tools/protocol'
@@ -14,6 +15,7 @@ import {
   extractToolCalls,
   stripToolBlocks,
   stripStreamingToolBlocks,
+  stripIncompleteToolCalls,
   createWriteBudget,
   isParallelSafe,
   planCallBatches,
@@ -42,6 +44,7 @@ export {
   extractToolCalls,
   stripToolBlocks,
   stripStreamingToolBlocks,
+  stripIncompleteToolCalls,
   createWriteBudget,
   isParallelSafe,
   planCallBatches,

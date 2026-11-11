@@ -4,6 +4,7 @@ import {
   executeToolCall,
   stripToolBlocks,
   stripStreamingToolBlocks,
+  stripIncompleteToolCalls,
   toolUsageHint,
   shouldShowUsageHint,
   callSignature,
@@ -51,6 +52,89 @@ describe('json 围栏里的工具调用', () => {
     const content = [0, 1, 2, 3].map(block).join('\n')
     expect(extractToolCalls(content, 2)).toHaveLength(2)
     expect(stripToolBlocks(content)).toBe('')
+  })
+})
+
+// 回归：模型（尤其长上下文/工作模式多轮之后）会漏写 ```tool，直接把 JSON 吐在正文里。
+// 以前这类回答 extractToolCalls 返回空数组 → 工具循环 break → 回答原地结束，JSON 被当正文渲染。
+describe('裸 JSON 工具调用兜底', () => {
+  it('单个裸调用照样执行并从展示里剥掉', () => {
+    const content = '我看看文件。\n{"tool":"files","args":{"action":"read","path":"js/core.js"}}'
+    expect(extractToolCalls(content)).toEqual([
+      { tool: 'files', args: { action: 'read', path: 'js/core.js' } },
+    ])
+    expect(stripToolBlocks(content)).toBe('我看看文件。')
+  })
+
+  it('多个裸 JSON 挤在一行、甚至跨行断裂也能全部识别', () => {
+    // 复刻 BUG 截图里的输出：同行多个对象 + "args": 之后的换行 + 重复键
+    const content = [
+      '{"tool":"files","args":{"action":"read","path":"js/core.js"}} {"tool":"files","args":{"action":"read","path":"js/input.js"}}',
+      '{"tool":"files","args":{"action":"read","action":"read","path":"tests/logic.test.js"}} {"tool":"files","args":',
+      '{"action":"read","path":"css/style.css"}}',
+    ].join('\n')
+    expect(extractToolCalls(content)).toEqual([
+      { tool: 'files', args: { action: 'read', path: 'js/core.js' } },
+      { tool: 'files', args: { action: 'read', path: 'js/input.js' } },
+      { tool: 'files', args: { action: 'read', path: 'tests/logic.test.js' } },
+      { tool: 'files', args: { action: 'read', path: 'css/style.css' } },
+    ])
+    expect(stripToolBlocks(content)).toBe('')
+  })
+
+  it('工具别名、name/arguments 写法同样兜底', () => {
+    expect(extractToolCalls('{"name":"FS","arguments":{"action":"list"}}')).toEqual([
+      { tool: 'files', args: { action: 'list' } },
+    ])
+  })
+
+  it('普通 JSON 数据与讲解示例不被误执行', () => {
+    const data = '配置：{"host":"127.0.0.1","port":8080}'
+    const example = '例如 {"tool":"files","args":{"action":"read","path":"a.js"}} 这样写'
+    const inline = '写法是 `{"tool":"files","args":{"action":"list"}}`。'
+    for (const content of [data, example, inline]) {
+      expect(extractToolCalls(content)).toEqual([])
+      expect(stripToolBlocks(content)).toBe(content)
+    }
+  })
+
+  it('代码块里的 JSON 不被裸扫描重复识别', () => {
+    const jsFence = '示例：\n```js\nconst call = {"tool":"files","args":{"action":"list"}}\n```'
+    expect(extractToolCalls(jsFence)).toEqual([])
+    expect(stripToolBlocks(jsFence)).toBe(jsFence)
+    const jsonFence = '```json\n{"tool":"files","args":{"action":"list"}}\n```'
+    expect(extractToolCalls(jsonFence)).toEqual([
+      { tool: 'files', args: { action: 'list' } },
+    ])
+  })
+
+  it('未闭合 tool 围栏里的完整 JSON 也能回收', () => {
+    const content = '读一下\n```tool\n{"tool":"files","args":{"action":"read","path":"a.js"}}'
+    expect(extractToolCalls(content)).toEqual([
+      { tool: 'files', args: { action: 'read', path: 'a.js' } },
+    ])
+    expect(stripToolBlocks(content)).toBe('读一下')
+  })
+
+  it('写坏但闭合的裸调用给模型一次格式反馈，而不是静默结束', () => {
+    const content = '{"tool":"files","args":{"action":"read",}}'
+    const calls = extractToolCalls(content)
+    expect(calls).toHaveLength(1)
+    expect(calls[0].tool).toBe('__invalid__')
+    expect(stripToolBlocks(content)).toBe('')
+  })
+
+  it('没写完的裸调用只隐藏、不执行', () => {
+    const partial = '查一下\n{"tool":"search_web","args":{"query":"天气'
+    expect(extractToolCalls(partial)).toEqual([])
+    expect(stripToolBlocks(partial)).toBe('查一下')
+    expect(stripStreamingToolBlocks(partial)).toBe('查一下')
+    expect(stripIncompleteToolCalls(partial)).toBe('查一下')
+  })
+
+  it('收尾清理不动正常正文', () => {
+    const content = '读完了，一共两个文件。\n\n- a.js\n- b.js\n'
+    expect(stripIncompleteToolCalls(content)).toBe(content)
   })
 })
 
