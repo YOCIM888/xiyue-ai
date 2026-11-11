@@ -6,11 +6,18 @@ import './style.css'
 import '@fortawesome/fontawesome-free/css/fontawesome.min.css'
 import '@fortawesome/fontawesome-free/css/solid.min.css'
 import { bootStorage, maybeWarnQuota, runStorageMaintenance } from './utils/kv'
+import { migrateSettingsAtBoot } from './utils/settingsSecret'
 import { maybeAutoBackup } from './utils/dataBackup'
 
 async function start() {
   // 先把 IndexedDB 数据（含旧 localStorage 迁移）装入内存缓存，再挂载应用
   await bootStorage()
+  // 设置里的 API Key 以密文落盘；挂载前解密，保证设置 store 同步读取到明文
+  try {
+    await migrateSettingsAtBoot()
+  } catch (err) {
+    console.warn('[settings] 启动解密失败', err)
+  }
 
   const app = createApp(App)
   app.use(createPinia())

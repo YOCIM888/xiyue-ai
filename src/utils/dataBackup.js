@@ -10,6 +10,8 @@ import {
   removeItem,
   setItem,
 } from './kv'
+import { saveSettings } from './storage'
+import { flushSecretWrites } from './settingsSecret'
 
 export const BACKUP_APP = 'XIYUE AI'
 export const BACKUP_VERSION = 1
@@ -300,12 +302,14 @@ export async function applyBackup(entries) {
         if (!obj.apiKey && currentApiKey) obj.apiKey = currentApiKey
         if (!obj.secondaryApiKey && currentSecondaryKey) obj.secondaryApiKey = currentSecondaryKey
         if (!obj.tavilyApiKey && currentTavilyKey) obj.tavilyApiKey = currentTavilyKey
-        setItem(key, JSON.stringify(obj))
+        // 设置走统一入口，Key 仍以密文落盘
+        saveSettings(obj)
         continue
       }
     }
     setItem(key, raw)
   }
+  await flushSecretWrites()
   await flushStorage()
   try {
     localStorage.setItem(AUTO_LAST_KEY, localDateKey())

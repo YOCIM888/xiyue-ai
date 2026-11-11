@@ -57,6 +57,15 @@ export default [
     },
   },
   {
+    // e2e 用例在 page.evaluate 里会用到浏览器全局
+    files: ['e2e/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+      globals: { ...globals.node, ...globals.browser },
+    },
+  },
+  {
     // 这几份用例在文件头声明了 @vitest-environment happy-dom，跑的时候有完整的 window / document；
     // 其余用例仍是 node 环境，不给浏览器全局，写错了才报得出来
     files: [

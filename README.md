@@ -37,7 +37,7 @@ On first use, open **Settings → Model Settings** and fill in the API Base, API
 - **Secondary model API** (optional): used for image understanding and AI image generation. Any OpenAI-compatible service works.
 - **Tavily API Key** (optional): used for web search.
 
-API keys are stored only in the current browser's local storage. They are sent only to the provider you configure.
+API keys are encrypted at rest with a non-extractable browser key (IndexedDB + AES-GCM) and are sent only to the provider you configure. This reduces plaintext exposure in local storage and disk dumps; it does not protect against XSS. For a public multi-user deployment, use a backend proxy instead.
 
 ## Scripts
 
@@ -47,12 +47,13 @@ npm run build    # Production build to dist/
 npm run preview  # Preview the production build
 npm run lint     # Run ESLint
 npm test         # Run Vitest unit tests
+npm run test:e2e # Run Playwright smoke tests (install Chromium first: npx playwright install chromium)
 ```
 
 ## Data Storage
 
 - Conversations, messages, and workspace files live in **IndexedDB**. Legacy localStorage data is migrated automatically on startup.
-- Small settings live in **localStorage** (`ai_chat_settings`).
+- Small settings live in **localStorage** (`ai_chat_settings`). API key fields are AES-GCM encrypted before writing; the in-memory copy stays plaintext so request code can read it synchronously.
 - The app warns when storage is low and creates a daily automatic backup (the latest 3 are kept).
 - Use **Settings → Data** to inspect storage usage, export a backup, or restore one.
 
@@ -97,6 +98,7 @@ The dev/preview server and build output both expose `/browser-extension.zip`. Yo
 ## Testing and Quality
 
 - Unit tests: `tests/` covers stores, services, and utility functions, using `happy-dom` for the browser environment.
+- E2E smoke tests: `e2e/smoke.spec.js` covers sending a message, creating and switching topics, writing a workspace file and opening its preview, a Starry Sky private chat, and settings persistence.
 - Linting: ESLint with separate browser / Node / Service Worker configurations.
 - CI: every push runs lint, tests, and the production build.
 

@@ -28,6 +28,9 @@ export function emitRemote(key, { removed = false, value } = {}) {
 export const kvMock = {
   getItem: key => (kvStore.has(key) ? kvStore.get(key) : null),
   setItem: (key, value) => { kvStore.set(key, typeof value === 'string' ? value : String(value ?? '')) },
+  // 内存桩只模拟读缓存；加密落盘由真实 kv 负责，用例不关心持久层形态
+  setCachedItem: (key, value) => { kvStore.set(key, typeof value === 'string' ? value : String(value ?? '')) },
+  setPersistedItem: () => {},
   removeItem: key => { kvStore.delete(key) },
   keys: () => [...kvStore.keys()],
   rawEntries: () => [...kvStore.entries()],

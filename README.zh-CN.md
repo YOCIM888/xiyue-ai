@@ -37,7 +37,7 @@ npm run dev
 - **副模型 API**（可选）：用于图片理解与 AI 生图，支持任意 OpenAI 兼容服务。
 - **Tavily API Key**（可选）：用于联网搜索。
 
-API Key 仅保存在当前浏览器的本地存储中，除发送给你配置的服务商外不会上传到其他位置。
+API Key 会先用不可导出的浏览器密钥（IndexedDB + AES-GCM）加密后再落盘，除发送给你配置的服务商外不会上传到其他位置。加密能降低 localStorage 与磁盘转储中的明文暴露，但不能防 XSS；公开多用户部署请改用后端代理。
 
 ## 常用脚本
 
@@ -47,12 +47,13 @@ npm run build    # 生产构建，输出到 dist/
 npm run preview  # 预览构建产物
 npm run lint     # ESLint 检查
 npm test         # Vitest 单元测试
+npm run test:e2e # Playwright 冒烟测试（首次先执行 npx playwright install chromium）
 ```
 
 ## 数据存储
 
 - 会话、消息、工作区文件等主要数据存放在 **IndexedDB**，启动时会自动把旧版 localStorage 数据迁移过去。
-- 设置等小体积配置保留在 **localStorage**（`ai_chat_settings`）。
+- 设置等小体积配置保留在 **localStorage**（`ai_chat_settings`）；API Key 字段落盘前会用 AES-GCM 加密，内存中仍保留明文供请求同步读取。
 - 存储空间不足时会提示，并每日自动备份（保留最近 3 份）。
 - 可在「设置 → 数据设置」查看占用、导出备份或导入恢复。
 
@@ -97,6 +98,7 @@ ai-chat/
 ## 测试与质量
 
 - 单元测试：`tests/` 下覆盖 store、服务与工具函数，使用 `happy-dom` 模拟浏览器环境。
+- 冒烟测试：`e2e/smoke.spec.js` 覆盖发消息、新建与切换会话、工作区写文件并打开预览、星空私聊、设置保存后刷新仍生效。
 - 代码检查：ESLint（Vue 3 + 浏览器 / Node / Service Worker 分环境配置）。
 - CI：每次推送自动执行 lint、测试与构建。
 

@@ -8,6 +8,8 @@ const AUTO_BACKUP_PREFIX = 'xiyue_auto_backup_'
 const AUTO_BACKUP_KEEP = 3
 // 体积小、启动即需要的小配置继续放 localStorage
 const LOCAL_KEYS = new Set(['ai_chat_settings'])
+// 落盘形态与内存形态不同的键：内存保留明文，持久层是密文，跨标签不能直接覆盖缓存
+const ENCRYPTED_AT_REST_KEYS = new Set(['ai_chat_settings'])
 const QUOTA_WARN_RATIO = 0.85
 const QUOTA_WARN_KEY = 'xiyue_quota_warned_at'
 
@@ -197,9 +199,17 @@ async function handleWriteError(err, key) {
   notifyFull()
 }
 
-export function setItem(key, value) {
+export function setCachedItem(key, value) {
   const str = typeof value === 'string' ? value : String(value ?? '')
   cache.set(key, str)
+}
+
+/**
+ * 只写持久层，不覆盖内存缓存。
+ * 用于「落盘形态与内存形态不同」的键（例如加密后的设置）。
+ */
+export function setPersistedItem(key, value) {
+  const str = typeof value === 'string' ? value : String(value ?? '')
 
   if (engine === 'local' || LOCAL_KEYS.has(key)) {
     safeLocalSet(key, str)
@@ -209,6 +219,11 @@ export function setItem(key, value) {
     // 抢在写入提交前发出去，它读到的是旧值，还会把旧值缓存下来再也不刷新
     enqueue(() => idbSet(key, str).then(() => { broadcastTab('kv', { key }) }), key)
   }
+}
+
+export function setItem(key, value) {
+  setCachedItem(key, value)
+  setPersistedItem(key, value)
 }
 
 export function removeItem(key) {
@@ -344,6 +359,8 @@ async function applyRemoteKv(key, removed) {
   try {
     if (removed) {
       cache.delete(key)
+    } else if (ENCRYPTED_AT_REST_KEYS.has(key)) {
+      // 设置在本标签的内存里是明文，持久层是密文：只通知订阅方，不用密文覆盖缓存
     } else if (engine === 'local' || LOCAL_KEYS.has(key)) {
       const local = localStorage.getItem(key)
       if (local === null) cache.delete(key)
