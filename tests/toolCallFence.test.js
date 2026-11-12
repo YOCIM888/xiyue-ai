@@ -215,3 +215,89 @@ describe('写入额度回显', () => {
     expect(() => budget.charge(1)).toThrow(/整条回答/)
   })
 })
+
+// 回归：部分模型吐原生训练的 DSML 标记（<｜DSML｜invoke …>）而不是 tool 围栏，
+// 以前解析不出调用 → 工具循环 break → 标记原文当正文渲染，回答「突然中断」。
+describe('DSML 原生工具标记', () => {
+  const invoke = (name, args) =>
+    `<｜DSML｜invoke name="${name}">\n<｜DSML｜parameter name="args" string="false">${JSON.stringify(args)}</｜DSML｜parameter>\n</｜DSML｜invoke>`
+
+  it('全角竖线 + calls 包装：执行调用，正文里不留标记', () => {
+    const content = `先读文件。\n<｜DSML｜calls>\n${invoke('files', { action: 'read', path: 'a.js' })}\n</｜DSML｜calls>\n读完了。`
+    expect(extractToolCalls(content)).toEqual([{ tool: 'files', args: { action: 'read', path: 'a.js' } }])
+    const stripped = stripToolBlocks(content)
+    expect(stripped).not.toContain('DSML')
+    expect(stripped).not.toContain('"action"')
+    expect(stripped).toContain('先读文件。')
+    expect(stripped).toContain('读完了。')
+  })
+
+  it('半角竖线、无包装照样识别并精确剥离', () => {
+    const content = '查一下。<|DSML|invoke name="search_web"><|DSML|parameter name="args" string="false">{"query":"天气"}</|DSML|parameter></|DSML|invoke>继续。'
+    expect(extractToolCalls(content)).toEqual([{ tool: 'search_web', args: { query: '天气' } }])
+    expect(stripToolBlocks(content)).toBe('查一下。继续。')
+  })
+
+  it('多个 invoke 按顺序执行，参数 JSON 不被裸扫描重复识别', () => {
+    const content = `<｜DSML｜calls>\n${invoke('files', { action: 'list' })}\n${invoke('files', { action: 'read', path: 'a.js' })}\n</｜DSML｜calls>`
+    expect(extractToolCalls(content)).toEqual([
+      { tool: 'files', args: { action: 'list' } },
+      { tool: 'files', args: { action: 'read', path: 'a.js' } },
+    ])
+  })
+
+  it('工具别名与扁平 parameter 写法都认', () => {
+    expect(extractToolCalls(invoke('fs', { action: 'list' }))).toEqual([{ tool: 'files', args: { action: 'list' } }])
+    const flat = '<｜DSML｜invoke name="files"><｜DSML｜parameter name="action">list</｜DSML｜parameter></｜DSML｜invoke>'
+    expect(extractToolCalls(flat)).toEqual([{ tool: 'files', args: { action: 'list' } }])
+  })
+
+  it('未知工具与非法 args 给模型报错反馈，而不是静默结束', () => {
+    const unknown = extractToolCalls(invoke('do_something_odd', { x: 1 }))
+    expect(unknown).toHaveLength(1)
+    expect(unknown[0].tool).toBe('__invalid__')
+    expect(unknown[0].error).toContain('未知工具')
+    const badArgs = '<｜DSML｜invoke name="files"><｜DSML｜parameter name="args" string="false">not json</｜DSML｜parameter></｜DSML｜invoke>'
+    expect(extractToolCalls(badArgs)[0].tool).toBe('__invalid__')
+    expect(stripToolBlocks(badArgs)).toBe('')
+  })
+
+  it('没写完的 invoke 只隐藏不执行，收尾清理干净', () => {
+    const content = '读一下。\n<｜DSML｜calls>\n<｜DSML｜invoke name="files">\n<｜DSML｜parameter name="args" string="false">{"action":"read","path":"a.js"}'
+    expect(extractToolCalls(content)).toEqual([])
+    expect(stripStreamingToolBlocks(content)).toBe('读一下。')
+    expect(stripIncompleteToolCalls(content)).toBe('读一下。')
+  })
+
+  it('完整 invoke 后面跟着没写完的第二个：执行前者藏后者', () => {
+    const content = `${invoke('files', { action: 'list' })}\n继续读。\n<｜DSML｜invoke name="files">\n<｜DSML｜parameter name="args" string="false">{"action":"read"`
+    expect(extractToolCalls(content)).toEqual([{ tool: 'files', args: { action: 'list' } }])
+    expect(stripStreamingToolBlocks(content)).toBe('继续读。')
+  })
+
+  it('流式期连半截前缀也藏起来，不闪现原文', () => {
+    expect(stripStreamingToolBlocks('正文<｜D')).toBe('正文')
+    expect(stripStreamingToolBlocks('正文<｜DSM')).toBe('正文')
+    expect(stripStreamingToolBlocks('正文<｜DSML｜inv')).toBe('正文')
+  })
+
+  it('空 calls 包装不执行，也不吃掉后面的正文', () => {
+    const content = '正文\n<｜DSML｜calls></｜DSML｜calls>\n结尾'
+    expect(extractToolCalls(content)).toEqual([])
+    expect(stripToolBlocks(content)).toBe('正文\n\n结尾')
+    expect(stripIncompleteToolCalls(content)).toBe('正文\n\n结尾')
+  })
+
+  it('tool 围栏与 DSML 混用时按出现顺序执行', () => {
+    const content = '```tool\n{"tool":"calculate","args":{"lang":"js","code":"return 1"}}\n```\n' + invoke('files', { action: 'list' })
+    expect(extractToolCalls(content).map(call => call.tool)).toEqual(['calculate', 'files'])
+  })
+
+  it('普通正文里的 < 和 DSML 字样不受影响', () => {
+    const content = '比较 a < b 且 c > d，DSML 是一种标记格式。'
+    expect(extractToolCalls(content)).toEqual([])
+    expect(stripToolBlocks(content)).toBe(content)
+    expect(stripIncompleteToolCalls(content)).toBe(content)
+    expect(stripStreamingToolBlocks(content)).toBe(content)
+  })
+})

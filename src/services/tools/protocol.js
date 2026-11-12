@@ -426,6 +426,66 @@ function collectBareCallBlocks(text, regions) {
   return blocks
 }
 
+// 部分模型会吐原生训练的 DSML 工具标记（<｜DSML｜invoke name="…">…）而不是 tool 围栏。
+// 竖线全角/半角、带空格都宽松识别；转成标准调用执行，避免标记被当最终正文外泄。
+const DSML_OPEN = String.raw`<\s*(?:[|｜]\s*){1,2}DSML\s*(?:[|｜]\s*){1,2}`
+const DSML_CLOSE = String.raw`</\s*(?:[|｜]\s*){1,2}DSML\s*(?:[|｜]\s*){1,2}`
+const DSML_INVOKE_RE = new RegExp(
+  `${DSML_OPEN}invoke\\s+name\\s*=\\s*["']([^"']+)["']\\s*>([\\s\\S]*?)${DSML_CLOSE}invoke\\s*>`, 'gi'
+)
+const DSML_PARAM_RE = new RegExp(
+  `${DSML_OPEN}parameter\\s+name\\s*=\\s*["']([^"']+)["'][^>]*>([\\s\\S]*?)${DSML_CLOSE}parameter\\s*>`, 'gi'
+)
+const DSML_WRAPPER_RE = new RegExp(`${DSML_OPEN}(?:tool_)?calls\\s*>|${DSML_CLOSE}(?:tool_)?calls\\s*>`, 'gi')
+const DSML_PARTIAL_TAIL_RE = /<\s*(?:[|｜]\s*){1,2}D(?:S(?:M(?:L(?:\s*(?:[|｜]\s*){1,2}[a-z_]*)?)?)?)?$/i
+
+function parseDsmlArgs(body) {
+  const args = {}
+  for (const match of body.matchAll(DSML_PARAM_RE)) {
+    const key = match[1]
+    const raw = match[2].trim()
+    let value = raw
+    try { value = JSON.parse(raw) } catch { /* 非 JSON 按字符串保留 */ }
+    if (key === 'args' || key === 'arguments') {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return { error: 'DSML 的 args 参数不是 JSON 对象' }
+      }
+      Object.assign(args, value)
+    } else {
+      args[key] = value
+    }
+  }
+  return { args }
+}
+
+function collectDsmlBlocks(text) {
+  if (!/DSML/i.test(text)) return []
+  const blocks = []
+  for (const match of text.matchAll(DSML_INVOKE_RE)) {
+    const base = { start: match.index, end: match.index + match[0].length, raw: match[0], explicitFence: false }
+    const parsed = parseDsmlArgs(match[2])
+    if (parsed.error) {
+      blocks.push({ ...base, invalid: true, error: parsed.error })
+      continue
+    }
+    const tool = TOOL_ALIASES[match[1].toLowerCase()] || ''
+    if (tool) blocks.push({ ...base, parsed: { name: match[1], args: parsed.args }, tool })
+    else blocks.push({ ...base, invalid: true, error: `未知工具：${match[1]}` })
+  }
+  // 还没写完的 invoke/parameter：只隐藏不执行，避免流式期原文闪现。
+  // calls 外层包装不算调用开头，否则空包装后面的正文会被连带藏掉
+  const lastEnd = blocks.length ? blocks[blocks.length - 1].end : 0
+  const openRe = new RegExp(`${DSML_OPEN}(?!(?:tool_)?calls)[a-z_]+`, 'gi')
+  let tailStart = -1
+  for (const match of text.matchAll(openRe)) {
+    if (match.index >= lastEnd) { tailStart = match.index; break }
+  }
+  const partial = DSML_PARTIAL_TAIL_RE.exec(text)
+  if (partial && partial.index >= lastEnd && (tailStart < 0 || partial.index < tailStart)) tailStart = partial.index
+  if (tailStart >= 0) blocks.push({ start: tailStart, end: text.length, raw: text.slice(tailStart), explicitFence: false, hideOnly: true })
+  return blocks
+}
+
 /**
  * 找出回答里所有可能是工具调用的代码块。
  * tool 围栏一律算调用（写错也要报错）；json 围栏只在内容确实是已知工具时才算，
@@ -451,8 +511,9 @@ function collectCallBlocks(text) {
     ;(explicitFence ? explicit : loose).push(block)
   }
   const fenced = explicit.length ? explicit : loose
-  const bare = collectBareCallBlocks(text, regions)
-  return [...fenced, ...bare].sort((a, b) => a.start - b.start)
+  const dsml = collectDsmlBlocks(text)
+  const bare = collectBareCallBlocks(text, [...regions, ...dsml])
+  return [...fenced, ...bare, ...dsml].sort((a, b) => a.start - b.start)
 }
 
 /** calls 与 removable 同源，杜绝「执行了却把 JSON 展示给用户」或反过来 */
@@ -514,6 +575,7 @@ export function stripToolBlocks(content) {
   return removeByRange(text, removable)
     .replace(SANDBOX_FENCE_RE, '')
     .replace(OPEN_TOOL_FENCE_MARK_RE, '$1')
+    .replace(DSML_WRAPPER_RE, '')
     .trim()
 }
 
@@ -525,9 +587,10 @@ export function stripIncompleteToolCalls(content) {
   const text = String(content || '')
   const fragments = collectCallBlocks(text).filter(block => block.hideOnly)
   const hasOpenFence = /(^|\n)```(?:tool|tool-call|tool_call)[ \t]*(?=\n|$)/i.test(text)
-  if (!fragments.length && !hasOpenFence) return text
+  if (!fragments.length && !hasOpenFence && !/DSML/i.test(text)) return text
   return removeByRange(text, fragments)
     .replace(OPEN_TOOL_FENCE_MARK_RE, '$1')
+    .replace(DSML_WRAPPER_RE, '')
     .trimEnd()
 }
 
@@ -563,6 +626,10 @@ export function stripStreamingToolBlocks(content) {
       : fenceCount % 2 === 1
     if (hide) text = text.slice(0, tail.index)
   }
+  // 没闭合的 DSML 段整段藏掉；连 DSML 都没打完的前缀（如 <｜DSM）也藏，避免原文闪现
+  text = text.replace(new RegExp(`${DSML_OPEN}[\\s\\S]*$`, 'i'), '')
+  const dsmlTail = DSML_PARTIAL_TAIL_RE.exec(text)
+  if (dsmlTail) text = text.slice(0, dsmlTail.index)
   return text.trimEnd()
 }
 
