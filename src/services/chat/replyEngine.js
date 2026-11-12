@@ -235,7 +235,7 @@ export async function generateReply(history, linkText, documentIds = [], searchB
     let toolMessages = apiMessages
     let toolRounds = 0
     let toolImagesRejected = false
-    const MAX_TOOL_ROUNDS = settings.workModeEnabled ? 50 : settings.browserSkillEnabled ? 50 : 10
+    const MAX_TOOL_ROUNDS = settings.workModeEnabled || settings.browserSkillEnabled ? 100 : 10
     const toolCallLimit = Math.max(1, Math.min(200, Number(settings.maxToolCallsPerRound) || 10))
     const writeBudget = createWriteBudget()
     // 同一条回答里累计的失败指纹，用来打断「同一个错误调用反复发」的空转
@@ -359,7 +359,7 @@ export async function generateReply(history, linkText, documentIds = [], searchB
         .map(({ call, result }) => {
           const body = String(result.text || '')
           const shown = body.length > RESULT_CHARS_TO_MODEL
-            ? `${body.slice(0, RESULT_CHARS_TO_MODEL)}\n…（结果已截断，原文 ${body.length} 字符；不要把它当成全文，请缩小查询范围或提高 limit）`
+            ? `${body.slice(0, RESULT_CHARS_TO_MODEL)}\n…（结果已截断，原文 ${body.length} 字符；不要把它当成全文。files read 传 offset/limit 分段续读；search 用 path/glob 收窄、减小 context 或 limit；其他工具缩小查询范围。）`
             : body
           const hint = shouldShowUsageHint(call, result) ? `\n\n${toolUsageHint(call.tool)}` : ''
           return `工具：${call.tool}\n状态：${result.ok ? '成功' : '失败'}\n${shown}${hint}`

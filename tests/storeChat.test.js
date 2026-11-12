@@ -741,7 +741,7 @@ describe('工具调用循环', () => {
     expect(feedback.content).toContain('工具：files')
     expect(feedback.content).toContain('状态：成功')
     expect(feedback.content).toContain('a.js\nb.js')
-    expect(feedback.content).toContain('还剩 49 轮工具调用')
+    expect(feedback.content).toContain('还剩 99 轮工具调用')
     expect(feedback.toolBrief).toContain('第 1 轮工具结果')
 
     const reply = store.messages[1]
@@ -756,7 +756,7 @@ describe('工具调用循环', () => {
       tool: 'files', ok: true, summary: 'files：列出目录', output: 'a.js\nb.js',
       label: '列出目录', target: '', icon: 'folder', pending: false, running: false,
     }])
-    expect(trace.used).toMatchObject({ rounds: 1, roundsTotal: 50, files: 0 })
+    expect(trace.used).toMatchObject({ rounds: 1, roundsTotal: 100, files: 0 })
     expect(reply.parts[2].content).toBe('一共有两个文件。')
   })
 

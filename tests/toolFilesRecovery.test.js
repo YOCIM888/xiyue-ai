@@ -47,6 +47,7 @@ vi.mock('../src/services/workspace.js', () => ({
   importZip: ws.importZip,
   getFileBlob: ws.getFileBlob,
   writeBlob: ws.writeBlob,
+  READ_WINDOW_CHARS: 6000,
 }))
 
 vi.mock('../src/services/workspaceActivity.js', () => ({ recordAiFileAction: ws.recordAiFileAction }))
@@ -461,5 +462,50 @@ describe('write/edit/append 的 diff 统计', () => {
   it('append 只计新增行', async () => {
     const res = await run({ action: 'append', path: 'a.js', content: 'a\nb' })
     expect(res.meta.stats).toEqual({ added: 2, removed: 0 })
+  })
+})
+
+describe('read 分页', () => {
+  it('未读完时回灌行范围与续读 offset，窗口预算传给 readFile', async () => {
+    workspace.readFile.mockResolvedValue({
+      text: 'a\nb', size: 40000, modified: 0, truncated: true,
+      totalLines: 900, startLine: 1, endLine: 200, nextOffset: 201, lineCut: false,
+    })
+    const res = await run({ action: 'read', path: 'game.js' })
+    expect(res.ok).toBe(true)
+    expect(res.text).toContain('第 1–200 行 / 共 900 行')
+    expect(res.text).toContain('offset=201')
+    expect(workspace.readFile).toHaveBeenCalledWith('game.js', { offset: 1, limit: 0, maxChars: 6000 })
+  })
+
+  it('offset/limit 透传给 readFile', async () => {
+    workspace.readFile.mockResolvedValue({
+      text: 'c', size: 10, modified: 0, truncated: false,
+      totalLines: 3, startLine: 3, endLine: 3, nextOffset: 4, lineCut: false,
+    })
+    const res = await run({ action: 'read', path: 'a.txt', offset: 3, limit: 10 })
+    expect(res.ok).toBe(true)
+    expect(workspace.readFile).toHaveBeenCalledWith('a.txt', { offset: 3, limit: 10, maxChars: 6000 })
+  })
+
+  it('offset 超界时失败并给出指引', async () => {
+    workspace.readFile.mockResolvedValue({
+      text: '', size: 10, modified: 0, truncated: false,
+      totalLines: 2, startLine: 9, endLine: 2, nextOffset: 3, lineCut: false,
+    })
+    const res = await run({ action: 'read', path: 'a.txt', offset: 9 })
+    expect(res.ok).toBe(false)
+    expect(res.text).toContain('超出文件总行数')
+  })
+
+  it('超长行被切时提示用 search 定位', async () => {
+    workspace.readFile.mockResolvedValue({
+      text: 'x'.repeat(6000), size: 20000, modified: 0, truncated: true,
+      totalLines: 1, startLine: 1, endLine: 1, nextOffset: 2, lineCut: true,
+    })
+    const res = await run({ action: 'read', path: 'min.js' })
+    expect(res.ok).toBe(true)
+    expect(res.text).toContain('行过长')
+    expect(res.text).toContain('search 定位')
   })
 })

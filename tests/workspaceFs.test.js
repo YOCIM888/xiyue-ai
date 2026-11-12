@@ -138,6 +138,53 @@ describe('读写与覆盖', () => {
   })
 })
 
+describe('read 分页窗口', () => {
+  const buildLines = n => Array.from({ length: n }, (_, i) => `line ${i + 1}`)
+
+  it('小文件默认整读，带行信息', async () => {
+    await ws.writeFile('small.txt', 'a\nb\nc')
+    const read = await ws.readFile('small.txt')
+    expect(read).toMatchObject({
+      text: 'a\nb\nc', truncated: false, totalLines: 3,
+      startLine: 1, endLine: 3, nextOffset: 4, lineCut: false,
+    })
+  })
+
+  it('maxChars 窗口按行截断，offset 续读拼回全文', async () => {
+    const lines = buildLines(60)
+    await ws.writeFile('paged.txt', lines.join('\n'))
+    const first = await ws.readFile('paged.txt', { maxChars: 100 })
+    expect(first.truncated).toBe(true)
+    expect(first.startLine).toBe(1)
+    expect(first.endLine).toBeLessThan(60)
+    expect(first.text).toBe(lines.slice(0, first.endLine).join('\n'))
+    const rest = await ws.readFile('paged.txt', { offset: first.nextOffset })
+    expect(rest.text).toBe(lines.slice(first.endLine).join('\n'))
+    expect(rest.truncated).toBe(false)
+  })
+
+  it('limit 限制行数', async () => {
+    await ws.writeFile('paged.txt', buildLines(30).join('\n'))
+    const read = await ws.readFile('paged.txt', { limit: 5 })
+    expect(read.text).toBe(buildLines(5).join('\n'))
+    expect(read).toMatchObject({ endLine: 5, nextOffset: 6, truncated: true })
+  })
+
+  it('offset 超出总行数返回空窗口', async () => {
+    await ws.writeFile('paged.txt', 'a\nb')
+    const read = await ws.readFile('paged.txt', { offset: 9 })
+    expect(read.text).toBe('')
+    expect(read.startLine).toBeGreaterThan(read.endLine)
+  })
+
+  it('单行超长按字符切并标记 lineCut', async () => {
+    await ws.writeFile('min.js', 'x'.repeat(500))
+    const read = await ws.readFile('min.js', { maxChars: 100 })
+    expect(read.text.length).toBe(100)
+    expect(read).toMatchObject({ lineCut: true, truncated: true, endLine: 1, nextOffset: 2 })
+  })
+})
+
 describe('edit 与 append', () => {
   beforeEach(async () => {
     await ws.writeFile('code.js', 'const a = 1\nconst b = 2\nconst a = 1\n// tail\n')

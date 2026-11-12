@@ -215,10 +215,43 @@ async function readRaw(path) {
   return { text, size: file.size, modified: file.lastModified }
 }
 
-export async function readFile(path) {
+export async function readFile(path, { offset = 1, limit = 0, maxChars = MAX_READ_CHARS } = {}) {
   const { text, size, modified } = await readRaw(path)
-  const truncated = text.length > MAX_READ_CHARS
-  return { text: truncated ? text.slice(0, MAX_READ_CHARS) : text, size, modified, truncated }
+  const lines = text.split('\n')
+  const totalLines = lines.length
+  const startLine = Math.max(1, Math.round(Number(offset) || 1))
+  const maxLines = Math.max(0, Math.round(Number(limit) || 0))
+  const from = startLine - 1
+  let end = from
+  let chars = 0
+  let lineCut = false
+  while (end < totalLines) {
+    if (maxLines && end - from >= maxLines) break
+    const cost = lines[end].length + 1
+    if (chars + cost > maxChars) {
+      // 单行就超预算：按字符切，行内剩余内容靠 search 定位，offset 仍按行推进
+      if (end === from) {
+        lines[from] = lines[from].slice(0, maxChars)
+        lineCut = true
+        end = from + 1
+      }
+      break
+    }
+    chars += cost
+    end += 1
+  }
+  const truncated = end < totalLines || lineCut
+  return {
+    text: lines.slice(from, end).join('\n'),
+    size,
+    modified,
+    truncated,
+    totalLines,
+    startLine,
+    endLine: end,
+    nextOffset: end + 1,
+    lineCut,
+  }
 }
 
 async function writeText(path, text, { force = false } = {}) {

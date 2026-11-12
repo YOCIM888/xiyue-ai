@@ -14,6 +14,7 @@ export {
   ensureWorkspacePermission,
   sanitizeFileName,
   formatBytes,
+  READ_WINDOW_CHARS,
 } from './workspace/core'
 
 export {

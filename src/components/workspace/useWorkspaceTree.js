@@ -38,7 +38,7 @@ function loadExpanded() {
 /** 文件树与搜索：展开状态、按名称/内容过滤、懒加载目录。 */
 export function useWorkspaceTree(ctx) {
   const filter = ref('')
-  const searchScope = ref('name')
+  const searchScope = ref('content')
   const searchPending = ref(false)
   const searchResults = ref([])
   const searchTruncated = ref(false)

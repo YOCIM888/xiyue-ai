@@ -14,6 +14,8 @@ export const HISTORY_KEEP = 5
 export const HISTORY_TOTAL_MAX = 200
 export const MAX_READ_BYTES = 1024 * 1024
 export const MAX_READ_CHARS = 100000
+// 模型单次 read 的窗口预算：必须小于 replyEngine 的 RESULT_CHARS_TO_MODEL，否则分页结果还会被二次截断
+export const READ_WINDOW_CHARS = 6000
 export const MAX_WRITE_CHARS = 2 * 1024 * 1024
 export const MAX_BACKUP_CHARS = 2 * 1024 * 1024
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
